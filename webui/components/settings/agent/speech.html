@@ -106,6 +106,98 @@
               </label>
             </div>
           </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Enable Grok Voice TTS Bridge</div>
+              <div class="field-description">
+                Route speech output through the standalone Grok Voice bridge endpoint (`/grok_voice_tts`) using server-side `XAI_API_KEY`.
+              </div>
+            </div>
+            <div class="field-control" x-data="{ grokVoiceServer: localStorage.getItem('speech.grokVoiceServer') === 'true' }" x-init="$watch('grokVoiceServer', value => localStorage.setItem('speech.grokVoiceServer', value))">
+              <label class="toggle">
+                <input type="checkbox" x-model="grokVoiceServer" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Grok voice name</div>
+              <div class="field-description">Voice used by Grok Voice API.</div>
+            </div>
+            <div class="field-control">
+              <select x-model="$store.settings.settings.grok_voice_name">
+                <option value="Ara">Ara</option>
+                <option value="Rex">Rex</option>
+                <option value="Sal">Sal</option>
+                <option value="Eve">Eve</option>
+                <option value="Leo">Leo</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Grok turn detection</div>
+              <div class="field-description">Keep server VAD for compatibility with future duplex streaming.</div>
+            </div>
+            <div class="field-control">
+              <select x-model="$store.settings.settings.grok_voice_turn_detection">
+                <option value="server_vad">server_vad</option>
+                <option value="none">none</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Grok input format</div>
+              <div class="field-description">Realtime input audio format for Grok session config.</div>
+            </div>
+            <div class="field-control">
+              <select x-model="$store.settings.settings.grok_voice_input_format">
+                <option value="audio/pcm">audio/pcm</option>
+                <option value="audio/pcmu">audio/pcmu</option>
+                <option value="audio/pcma">audio/pcma</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Grok output format</div>
+              <div class="field-description">Realtime output format; current bridge supports WAV output from PCM stream.</div>
+            </div>
+            <div class="field-control">
+              <select x-model="$store.settings.settings.grok_voice_output_format">
+                <option value="audio/pcm">audio/pcm</option>
+                <option value="audio/pcmu">audio/pcmu</option>
+                <option value="audio/pcma">audio/pcma</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Grok input sample rate (Hz)</div>
+              <div class="field-description">Used when Grok input format is `audio/pcm`.</div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="8000" step="50" x-model.number="$store.settings.settings.grok_voice_input_rate" />
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Grok output sample rate (Hz)</div>
+              <div class="field-description">Used when Grok output format is `audio/pcm`.</div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="8000" step="50" x-model.number="$store.settings.settings.grok_voice_output_rate" />
+            </div>
+          </div>
         </div>
       </template>
     </div>

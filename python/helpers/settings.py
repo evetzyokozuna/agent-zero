@@ -177,6 +177,12 @@ class Settings(TypedDict):
     stt_waiting_timeout: int
 
     tts_kokoro: bool
+    grok_voice_name: str
+    grok_voice_input_format: str
+    grok_voice_input_rate: int
+    grok_voice_output_format: str
+    grok_voice_output_rate: int
+    grok_voice_turn_detection: str
 
     mcp_servers: str
     mcp_client_init_timeout: int
@@ -661,6 +667,12 @@ def get_default_settings() -> Settings:
         stt_silence_duration=get_default_value("stt_silence_duration", 1000),
         stt_waiting_timeout=get_default_value("stt_waiting_timeout", 2000),
         tts_kokoro=get_default_value("tts_kokoro", True),
+        grok_voice_name=get_default_value("grok_voice_name", "Ara"),
+        grok_voice_input_format=get_default_value("grok_voice_input_format", "audio/pcm"),
+        grok_voice_input_rate=get_default_value("grok_voice_input_rate", 24000),
+        grok_voice_output_format=get_default_value("grok_voice_output_format", "audio/pcm"),
+        grok_voice_output_rate=get_default_value("grok_voice_output_rate", 24000),
+        grok_voice_turn_detection=get_default_value("grok_voice_turn_detection", "server_vad"),
         mcp_servers=get_default_value("mcp_servers", '{\n    "mcpServers": {}\n}'),
         mcp_client_init_timeout=get_default_value("mcp_client_init_timeout", 10),
         mcp_client_tool_timeout=get_default_value("mcp_client_tool_timeout", 120),

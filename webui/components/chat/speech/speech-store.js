@@ -27,6 +27,7 @@ const model = {
 
   // TTS Settings
   tts_kokoro: false,
+  grok_voice_name: "Ara",
   agent_profile: "agent0",
 
   // TTS State
@@ -125,6 +126,7 @@ const model = {
         this.stt_waiting_timeout =
           settings.stt_waiting_timeout ?? this.stt_waiting_timeout;
         this.tts_kokoro = settings.tts_kokoro ?? this.tts_kokoro;
+        this.grok_voice_name = settings.grok_voice_name ?? this.grok_voice_name;
         this.agent_profile = settings.agent_profile ?? this.agent_profile;
       }
     } catch (error) {
@@ -267,6 +269,14 @@ const model = {
 
   // speak wrapper
   async _speak(text, waitForPrevious, terminator) {
+    if (this.isGrokVoiceEnabled()) {
+      try {
+        return await this.speakWithGrokVoice(text, waitForPrevious, terminator);
+      } catch (error) {
+        console.error("Grok Voice TTS error:", error);
+      }
+    }
+
     if (this.isEl11Enabled()) {
       try {
         return await this.speakWithEl11(text, waitForPrevious, terminator);
@@ -289,6 +299,10 @@ const model = {
 
   isEl11Enabled() {
     return localStorage.getItem("speech.el11Server") === "true";
+  },
+
+  isGrokVoiceEnabled() {
+    return localStorage.getItem("speech.grokVoiceServer") === "true";
   },
 
   chunkText(text, { maxChunkLength = 135, lineSeparator = "..." } = {}) {
@@ -454,6 +468,35 @@ const model = {
     if (!contentType.includes("audio/")) {
       const maybeErr = await response.text();
       throw new Error(maybeErr || "ElevenLabs returned non-audio response");
+    }
+
+    const audioBlob = await response.blob();
+
+    while (waitForPrevious && this.isSpeaking) await sleep(25);
+    if (terminator && terminator()) return;
+
+    if (!waitForPrevious) this.stopAudio();
+
+    return await this.playAudioBlob(audioBlob);
+  },
+
+  // Grok Voice TTS via backend websocket bridge
+  async speakWithGrokVoice(text, waitForPrevious = false, terminator = null) {
+    const response = await fetchApi("/grok_voice_tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(errText || `HTTP ${response.status}`);
+    }
+
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.includes("audio/")) {
+      const maybeErr = await response.text();
+      throw new Error(maybeErr || "Grok Voice returned non-audio response");
     }
 
     const audioBlob = await response.blob();
