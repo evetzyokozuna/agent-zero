@@ -40,6 +40,8 @@ const model = {
   userHasInteracted: false,
   stopSpeechChain: false,
   ttsStream: null,
+  lastSpeechEndedAt: 0,
+  micLoopbackGuardMs: 1200,
 
   // STT State
   microphoneInput: null,
@@ -128,6 +130,7 @@ const model = {
         this.tts_kokoro = settings.tts_kokoro ?? this.tts_kokoro;
         this.grok_voice_name = settings.grok_voice_name ?? this.grok_voice_name;
         this.agent_profile = settings.agent_profile ?? this.agent_profile;
+        this.normalizeProviderSelection();
       }
     } catch (error) {
       window.toastFetchError("Failed to load speech settings", error);
@@ -274,6 +277,14 @@ const model = {
         return await this.speakWithGrokVoice(text, waitForPrevious, terminator);
       } catch (error) {
         console.error("Grok Voice TTS error:", error);
+        shortcuts.frontendNotification({
+          type: "error",
+          message:
+            "Grok Voice playback failed. No provider fallback was used; check XAI settings/logs.",
+          displayTime: 6,
+          frontendOnly: true,
+        });
+        throw error;
       }
     }
 
@@ -303,6 +314,23 @@ const model = {
 
   isGrokVoiceEnabled() {
     return localStorage.getItem("speech.grokVoiceServer") === "true";
+  },
+
+  normalizeProviderSelection() {
+    if (!this.isGrokVoiceEnabled()) return;
+    this.tts_kokoro = false;
+    localStorage.setItem("speech.el11Server", "false");
+  },
+
+  markSpeechEnded() {
+    this.isSpeaking = false;
+    this.lastSpeechEndedAt = Date.now();
+  },
+
+  isMicCaptureBlocked() {
+    if (this.isSpeaking) return true;
+    if (!this.lastSpeechEndedAt) return false;
+    return Date.now() - this.lastSpeechEndedAt < this.micLoopbackGuardMs;
   },
 
   chunkText(text, { maxChunkLength = 135, lineSeparator = "..." } = {}) {
@@ -442,7 +470,7 @@ const model = {
       this.isSpeaking = true;
     };
     this.browserUtterance.onend = () => {
-      this.isSpeaking = false;
+      this.markSpeechEnded();
     };
 
     this.synth.speak(this.browserUtterance);
@@ -556,13 +584,13 @@ const model = {
         this.isSpeaking = true;
       };
       audio.onended = () => {
-        this.isSpeaking = false;
+        this.markSpeechEnded();
         this.currentAudio = null;
         URL.revokeObjectURL(objectUrl);
         resolve();
       };
       audio.onerror = (error) => {
-        this.isSpeaking = false;
+        this.markSpeechEnded();
         this.currentAudio = null;
         URL.revokeObjectURL(objectUrl);
         reject(error);
@@ -572,7 +600,7 @@ const model = {
       this.currentAudio = audio;
 
       audio.play().catch((error) => {
-        this.isSpeaking = false;
+        this.markSpeechEnded();
         this.currentAudio = null;
         URL.revokeObjectURL(objectUrl);
         if (error.name === "NotAllowedError") {
@@ -597,12 +625,12 @@ const model = {
         this.isSpeaking = true;
       };
       audio.onended = () => {
-        this.isSpeaking = false;
+        this.markSpeechEnded();
         this.currentAudio = null;
         resolve();
       };
       audio.onerror = (error) => {
-        this.isSpeaking = false;
+        this.markSpeechEnded();
         this.currentAudio = null;
         reject(error);
       };
@@ -611,7 +639,7 @@ const model = {
       this.currentAudio = audio;
 
       audio.play().catch((error) => {
-        this.isSpeaking = false;
+        this.markSpeechEnded();
         this.currentAudio = null;
 
         if (error.name === "NotAllowedError") {
@@ -640,7 +668,7 @@ const model = {
       this.audioEl.currentTime = 0;
     }
     this.currentAudio = null;
-    this.isSpeaking = false;
+    this.markSpeechEnded();
   },
 
   // Clean text for TTS
@@ -943,6 +971,18 @@ class MicrophoneInput {
     const analyzeFrame = () => {
       if (this.status === Status.INACTIVE) return;
 
+      if (store.isMicCaptureBlocked()) {
+        this.lastChunk = null;
+        this.silenceStartTime = null;
+        if (this.status === Status.RECORDING || this.status === Status.WAITING) {
+          this.audioChunks = [];
+          this.stopRecording();
+          this.status = Status.LISTENING;
+        }
+        this.analysisFrame = requestAnimationFrame(analyzeFrame);
+        return;
+      }
+
       const dataArray = new Uint8Array(this.analyserNode.fftSize);
       this.analyserNode.getByteTimeDomainData(dataArray);
 
@@ -954,16 +994,12 @@ class MicrophoneInput {
       const rms = Math.sqrt(sum / dataArray.length);
       const now = Date.now();
 
-      // Update status based on audio level (ignore if TTS is speaking)
+      // Update status based on audio level.
       if (rms > this.densify(store.stt_silence_threshold)) {
         this.lastAudioTime = now;
         this.silenceStartTime = null;
 
-        if (
-          (this.status === Status.LISTENING ||
-            this.status === Status.WAITING) &&
-          !store.isSpeaking
-        ) {
+        if (this.status === Status.LISTENING || this.status === Status.WAITING) {
           this.status = Status.RECORDING;
         }
       } else if (this.status === Status.RECORDING) {
