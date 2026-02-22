@@ -81,6 +81,10 @@ class GetCsrfToken(ApiHandler):
                 or request.environ.get("HTTP_REFERER")
             )
         if not r:
+            # Fallback for same-origin bootstrap requests where both Origin and
+            # Referer are stripped by browser/privacy settings.
+            r = getattr(request, "host_url", None) or getattr(request, "url_root", None)
+        if not r:
             return None
         # parse and normalize
         p = urlparse(r)

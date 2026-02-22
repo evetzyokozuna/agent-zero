@@ -62,6 +62,8 @@ Notes:
   - Relative output dump directory.
 - `code_exec_prefer_python_file_write`
   - When true, terminal heredoc file writes are blocked or converted to Python file write paths.
+- `code_exec_max_input_chars`
+  - Maximum allowed input size for `code_execution_tool` `code` payloads before early rejection.
 
 ---
 

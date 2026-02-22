@@ -67,11 +67,14 @@ Use:
 
 - low first/between/max timeouts
 - small output max chars + dump enabled
+- `code_exec_max_input_chars` set to a small value for rejection testing
 
 Expected:
 
 - each timeout path triggers predictably
 - large output truncates and dumps
+- oversized `code` payloads are rejected before execution
+- malformed Python payloads fail preflight syntax check with a clear warning
 
 ### B4. File-write policy behavior
 

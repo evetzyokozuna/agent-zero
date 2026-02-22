@@ -55,6 +55,15 @@ When `A0_SET_code_exec_prefer_python_file_write=true`:
 
 This prevents common infinite retry loops caused by truncated heredoc tool payloads.
 
+### Code input size guard
+
+`A0_SET_code_exec_max_input_chars` sets an upper bound for `code_execution_tool` payload size (`runtime=python|nodejs|terminal`).
+
+- oversized `code` payloads are rejected early with a clear warning
+- Python payloads get a preflight syntax check before execution
+
+This helps surface truncation/malformed payload issues early instead of failing deep in runtime execution.
+
 ## Operational defaults
 
 A practical starting point is the balanced profile in `docs/setup/env-examples/profile_balanced_production.env`.

@@ -187,6 +187,16 @@
             </div>
           </div>
 
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Code input max chars</div>
+              <div class="field-description">Rejects oversized runtime code payloads to avoid truncated writes.</div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="1000" step="1000" x-model.number="$store.settings.settings.code_exec_max_input_chars" />
+            </div>
+          </div>
+
           <div class="subsection-title">Subordinate Guardrails</div>
 
           <div class="field">

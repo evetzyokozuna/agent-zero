@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import shlex
 import time
 import os
+from pathlib import Path
 from python.helpers.tool import Tool, Response
 from python.helpers import files, rfc_exchange, projects, runtime, settings
 from python.helpers.print_style import PrintStyle
@@ -72,18 +73,81 @@ class CodeExecution(Tool):
         session = int(exec_args.get("session", 0))
         self.allow_running = bool(exec_args.get("allow_running", False))
         reset = bool(exec_args.get("reset", False) or runtime == "reset")
+        code = ""
+        max_input_chars = int(
+            settings.get_settings().get("code_exec_max_input_chars", 60000)
+        )
+
+        if runtime in {"python", "nodejs", "terminal"}:
+            code = self._coerce_code_arg(exec_args.get("code"))
+            if not code.strip():
+                info = (
+                    "Code execution request ignored because the `code` argument is empty or missing. "
+                    "Regenerate the tool call with complete content."
+                )
+                PrintStyle.warning(info)
+                response = self.agent.read_prompt("fw.code.info.md", info=info)
+                return Response(message=response, break_loop=False)
+
+            if max_input_chars > 0 and len(code) > max_input_chars:
+                info = (
+                    f"Code payload too large ({len(code)} chars > "
+                    f"A0_SET_code_exec_max_input_chars={max_input_chars}). "
+                    "Split into smaller chunks and retry."
+                )
+                PrintStyle.warning(info)
+                response = self.agent.read_prompt("fw.code.info.md", info=info)
+                return Response(message=response, break_loop=False)
+
+            if runtime == "python":
+                syntax_error = self._python_preflight_syntax_error(code)
+                if syntax_error:
+                    info = (
+                        "Python code failed preflight syntax check before execution. "
+                        "The payload may be truncated or malformed. "
+                        f"Details: {syntax_error}"
+                    )
+                    PrintStyle.warning(info)
+                    response = self.agent.read_prompt("fw.code.info.md", info=info)
+                    return Response(message=response, break_loop=False)
+        elif runtime == "file":
+            path = self._coerce_code_arg(exec_args.get("path")).strip()
+            content = self._coerce_code_arg(exec_args.get("content"))
+            append = bool(exec_args.get("append", False))
+
+            if not path:
+                info = (
+                    "File write request ignored because `path` is empty. "
+                    "Regenerate the tool call with a valid path."
+                )
+                PrintStyle.warning(info)
+                response = self.agent.read_prompt("fw.code.info.md", info=info)
+                return Response(message=response, break_loop=False)
+
+            if max_input_chars > 0 and len(content) > max_input_chars:
+                info = (
+                    f"File content payload too large ({len(content)} chars > "
+                    f"A0_SET_code_exec_max_input_chars={max_input_chars}). "
+                    "Split into smaller chunks and retry."
+                )
+                PrintStyle.warning(info)
+                response = self.agent.read_prompt("fw.code.info.md", info=info)
+                return Response(message=response, break_loop=False)
+
+            response = await self.execute_file_write(path=path, content=content, append=append)
+            return Response(message=response, break_loop=False)
 
         if runtime == "python":
             response = await self.execute_python_code(
-                code=str(exec_args["code"]), session=session, reset=reset
+                code=code, session=session, reset=reset
             )
         elif runtime == "nodejs":
             response = await self.execute_nodejs_code(
-                code=str(exec_args["code"]), session=session, reset=reset
+                code=code, session=session, reset=reset
             )
         elif runtime == "terminal":
             response = await self.execute_terminal_command(
-                command=str(exec_args["code"]), session=session, reset=reset
+                command=code, session=session, reset=reset
             )
         elif runtime == "output":
             response = await self.get_terminal_output(
@@ -544,6 +608,37 @@ class CodeExecution(Tool):
         if self._output_dump_marker:
             output += self._output_dump_marker
         return output
+
+    async def execute_file_write(self, path: str, content: str, append: bool = False):
+        normalized = files.normalize_a0_path(path)
+        mode = "a" if append else "w"
+        abs_path = str(Path(normalized).resolve())
+
+        try:
+            target = Path(normalized)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open(mode, encoding="utf-8") as f:
+                f.write(content)
+            op = "Appended to" if append else "Wrote"
+            info = f"{op} file: {abs_path} ({len(content)} chars)."
+            PrintStyle.info(info)
+            return self.agent.read_prompt("fw.code.info.md", info=info)
+        except Exception as e:
+            info = f"File write failed for {abs_path}: {e}"
+            PrintStyle.error(info)
+            return self.agent.read_prompt("fw.code.info.md", info=info)
+
+    def _coerce_code_arg(self, value: object) -> str:
+        if value is None:
+            return ""
+        return str(value)
+
+    def _python_preflight_syntax_error(self, code: str) -> str | None:
+        try:
+            compile(code, "<code_execution_tool>", "exec")
+            return None
+        except SyntaxError as e:
+            return f"{e.msg} (line {e.lineno}, offset {e.offset})"
 
     def _has_heredoc(self, command: str) -> bool:
         return re.search(r"<<-?\s*(['\"]?)[A-Za-z_][A-Za-z0-9_]*\1", command) is not None
