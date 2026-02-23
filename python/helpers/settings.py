@@ -113,6 +113,12 @@ class Settings(TypedDict):
     code_exec_max_input_chars: int
     code_exec_regressive_guard_retry_threshold: int
     code_exec_regressive_guard_retry_window_seconds: int
+    code_exec_same_file_read_ceiling: int
+    code_exec_same_file_write_ceiling: int
+    code_exec_file_op_window_seconds: int
+    code_exec_strategy_block_ttl_seconds: int
+    tool_repeat_signature_threshold: int
+    tool_repeat_signature_window_seconds: int
     subordinate_max_depth: int
     subordinate_max_calls_per_turn: int
     subordinate_max_runtime_seconds: int
@@ -640,6 +646,12 @@ def get_default_settings() -> Settings:
         code_exec_max_input_chars=get_default_value("code_exec_max_input_chars", 60000),
         code_exec_regressive_guard_retry_threshold=get_default_value("code_exec_regressive_guard_retry_threshold", 3),
         code_exec_regressive_guard_retry_window_seconds=get_default_value("code_exec_regressive_guard_retry_window_seconds", 120),
+        code_exec_same_file_read_ceiling=get_default_value("code_exec_same_file_read_ceiling", 2),
+        code_exec_same_file_write_ceiling=get_default_value("code_exec_same_file_write_ceiling", 2),
+        code_exec_file_op_window_seconds=get_default_value("code_exec_file_op_window_seconds", 180),
+        code_exec_strategy_block_ttl_seconds=get_default_value("code_exec_strategy_block_ttl_seconds", 300),
+        tool_repeat_signature_threshold=get_default_value("tool_repeat_signature_threshold", 1),
+        tool_repeat_signature_window_seconds=get_default_value("tool_repeat_signature_window_seconds", 180),
         subordinate_max_depth=get_default_value("subordinate_max_depth", 2),
         subordinate_max_calls_per_turn=get_default_value("subordinate_max_calls_per_turn", 4),
         subordinate_max_runtime_seconds=get_default_value("subordinate_max_runtime_seconds", 300),

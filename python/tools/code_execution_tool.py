@@ -166,6 +166,17 @@ class CodeExecution(Tool):
                 code=code, session=session, reset=reset
             )
         elif runtime == "terminal":
+            repetitive_msg, repetitive_break = self._check_repetitive_terminal_command(
+                session=session, command=code
+            )
+            if repetitive_msg:
+                PrintStyle.warning(repetitive_msg)
+                response = self.agent.read_prompt("fw.code.info.md", info=repetitive_msg)
+                return Response(message=response, break_loop=repetitive_break)
+            cat_path = self._extract_simple_cat_path(code)
+            if cat_path:
+                response, break_loop = await self.execute_file_read(path=cat_path)
+                return Response(message=response, break_loop=break_loop)
             response = await self.execute_terminal_command(
                 command=code, session=session, reset=reset
             )
@@ -616,6 +627,7 @@ class CodeExecution(Tool):
     def fix_full_output(self, output: str):
         # remove any single byte \xXX escapes
         output = re.sub(r"(?<!\\)\\x[0-9A-Fa-f]{2}", "", output)
+        output = self._strip_runtime_noise_lines(output)
         # Strip every line of output before truncation
         # output = "\n".join(line.strip() for line in output.splitlines())
         set = settings.get_settings()
@@ -645,11 +657,26 @@ class CodeExecution(Tool):
         normalized = files.normalize_a0_path(path)
         mode = "a" if append else "w"
         abs_path = str(Path(normalized).resolve())
+        op_ceiling_msg, op_ceiling_break = self._check_file_op_ceiling(
+            abs_path=abs_path,
+            operation="write",
+        )
+        if op_ceiling_msg:
+            PrintStyle.warning(op_ceiling_msg)
+            return self.agent.read_prompt("fw.code.info.md", info=op_ceiling_msg), op_ceiling_break
+        if not append:
+            blocked_msg, blocked_break = self._check_blocked_strategy(
+                abs_path=abs_path, strategy="full_overwrite"
+            )
+            if blocked_msg:
+                PrintStyle.warning(blocked_msg)
+                return self.agent.read_prompt("fw.code.info.md", info=blocked_msg), blocked_break
         guard_break = False
         guard_msg = self._get_regressive_overwrite_guard(
             abs_path=abs_path, content=content, append=append
         )
         if guard_msg:
+            self._block_strategy(abs_path=abs_path, strategy="full_overwrite")
             PrintStyle.warning(guard_msg)
             guard_break = self._should_break_after_guard(abs_path)
             return self.agent.read_prompt("fw.code.info.md", info=guard_msg), guard_break
@@ -664,6 +691,9 @@ class CodeExecution(Tool):
                 PrintStyle.warning(info)
                 return self.agent.read_prompt("fw.code.info.md", info=info), False
             target.parent.mkdir(parents=True, exist_ok=True)
+            # Unescape content: model/serialization sometimes emits literal \n instead of newlines.
+            # Preserve \\n (literal backslash-n) by escaping \\ first.
+            content = self._unescape_file_content(content)
             with target.open(mode, encoding="utf-8") as f:
                 f.write(content)
             if not append:
@@ -689,10 +719,66 @@ class CodeExecution(Tool):
             PrintStyle.error(info)
             return self.agent.read_prompt("fw.code.info.md", info=info), False
 
+    async def execute_file_read(self, path: str) -> tuple[str, bool]:
+        normalized = files.normalize_a0_path(path)
+        abs_path = str(Path(normalized).resolve())
+        op_ceiling_msg, op_ceiling_break = self._check_file_op_ceiling(
+            abs_path=abs_path,
+            operation="read",
+        )
+        if op_ceiling_msg:
+            PrintStyle.warning(op_ceiling_msg)
+            return self.agent.read_prompt("fw.code.info.md", info=op_ceiling_msg), op_ceiling_break
+        blocked_msg, blocked_break = self._check_blocked_strategy(
+            abs_path=abs_path, strategy="same_path_read"
+        )
+        if blocked_msg:
+            PrintStyle.warning(blocked_msg)
+            return self.agent.read_prompt("fw.code.info.md", info=blocked_msg), blocked_break
+        try:
+            target = Path(normalized)
+            if not target.exists():
+                info = f"File read failed for {abs_path}: file does not exist."
+                PrintStyle.warning(info)
+                return self.agent.read_prompt("fw.code.info.md", info=info), False
+            if target.is_dir():
+                info = f"File read failed for {abs_path}: target is a directory."
+                PrintStyle.warning(info)
+                return self.agent.read_prompt("fw.code.info.md", info=info), False
+
+            content = target.read_text(encoding="utf-8")
+            repetitive_msg, repetitive_break = self._check_repetitive_file_read(
+                abs_path=abs_path, content=content
+            )
+            if repetitive_msg:
+                self._block_strategy(abs_path=abs_path, strategy="same_path_read")
+                PrintStyle.warning(repetitive_msg)
+                return self.agent.read_prompt("fw.code.info.md", info=repetitive_msg), repetitive_break
+
+            info = (
+                f"Read file: {abs_path} ({len(content)} chars).\n\n"
+                f"{content}"
+            )
+            return self.agent.read_prompt("fw.code.info.md", info=info), False
+        except Exception as e:
+            info = f"File read failed for {abs_path}: {e}"
+            PrintStyle.error(info)
+            return self.agent.read_prompt("fw.code.info.md", info=info), False
+
     def _coerce_code_arg(self, value: object) -> str:
         if value is None:
             return ""
         return str(value)
+
+    def _unescape_file_content(self, content: str) -> str:
+        """Convert literal \\n, \\t, \\r in content to real newlines/tabs/cr.
+        Preserves \\\\n (literal backslash-n) by escaping \\ first."""
+        if not content:
+            return content
+        _PL = "\uE000"  # private-use placeholder, unlikely in normal text
+        s = content.replace("\\\\", _PL)
+        s = s.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r")
+        return s.replace(_PL, "\\")
 
     def _validate_file_path(self, path: str) -> str | None:
         candidate = path.strip()
@@ -796,6 +882,7 @@ class CodeExecution(Tool):
             # Successful full write clears recovery mode.
             meta[abs_path]["recovery_required"] = False
             meta[abs_path]["guard_reject_count"] = 0
+            self._clear_blocked_strategy(abs_path=abs_path, strategy="full_overwrite")
         self.agent.set_data("_cet_file_write_meta", meta)
 
     def _mark_recovery_required(self, abs_path: str):
@@ -837,6 +924,84 @@ class CodeExecution(Tool):
             )
             return True
         return False
+
+    def _check_file_op_ceiling(self, abs_path: str, operation: str) -> tuple[str | None, bool]:
+        set = settings.get_settings()
+        read_ceiling = int(set.get("code_exec_same_file_read_ceiling", 2))
+        write_ceiling = int(set.get("code_exec_same_file_write_ceiling", 2))
+        window_seconds = int(set.get("code_exec_file_op_window_seconds", 180))
+        if window_seconds < 1:
+            window_seconds = 1
+
+        if operation == "read":
+            ceiling = read_ceiling
+        else:
+            ceiling = write_ceiling
+        if ceiling < 1:
+            return None, False
+
+        key = f"{operation}:{abs_path}"
+        now = time.time()
+        meta: dict = self.agent.get_data("_cet_file_op_counts") or {}
+        prev = meta.get(key, {})
+        last_ts = float(prev.get("ts", 0) or 0)
+        count = int(prev.get("count", 0) or 0)
+        if (now - last_ts) <= window_seconds:
+            count += 1
+        else:
+            count = 1
+        meta[key] = {"count": count, "ts": now}
+        self.agent.set_data("_cet_file_op_counts", meta)
+
+        if count > ceiling:
+            tag = (
+                "[READ_GUARD:SAME_FILE_CEILING]"
+                if operation == "read"
+                else "[WRITE_GUARD:SAME_FILE_CEILING]"
+            )
+            return (
+                f"{tag} Blocked repeated {operation} operations for {abs_path} "
+                f"(count={count}, ceiling={ceiling}, window={window_seconds}s). "
+                "Do not repeat this operation again in this turn; use existing output and switch strategy.",
+                True,
+            )
+        return None, False
+
+    def _check_blocked_strategy(self, abs_path: str, strategy: str) -> tuple[str | None, bool]:
+        meta: dict = self.agent.get_data("_cet_strategy_blocks") or {}
+        key = f"{abs_path}:{strategy}"
+        blocked = meta.get(key)
+        if not blocked:
+            return None, False
+        set = settings.get_settings()
+        ttl_seconds = int(set.get("code_exec_strategy_block_ttl_seconds", 300))
+        if ttl_seconds < 1:
+            ttl_seconds = 1
+        blocked_at = float(blocked.get("ts", 0) or 0)
+        age = int(max(0, time.time() - blocked_at))
+        if age > ttl_seconds:
+            meta.pop(key, None)
+            self.agent.set_data("_cet_strategy_blocks", meta)
+            return None, False
+        return (
+            "[STRATEGY_GUARD:ALTERNATE_REQUIRED] "
+            f"Blocked strategy `{strategy}` for {abs_path} after prior guardrail trigger "
+            f"({age}s ago). Use an alternate approach in this turn.",
+            True,
+        )
+
+    def _block_strategy(self, abs_path: str, strategy: str):
+        meta: dict = self.agent.get_data("_cet_strategy_blocks") or {}
+        key = f"{abs_path}:{strategy}"
+        meta[key] = {"ts": time.time()}
+        self.agent.set_data("_cet_strategy_blocks", meta)
+
+    def _clear_blocked_strategy(self, abs_path: str, strategy: str):
+        meta: dict = self.agent.get_data("_cet_strategy_blocks") or {}
+        key = f"{abs_path}:{strategy}"
+        if key in meta:
+            meta.pop(key, None)
+            self.agent.set_data("_cet_strategy_blocks", meta)
 
     def _write_snapshot(self, abs_path: str, content: str) -> str:
         digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
@@ -955,6 +1120,99 @@ class CodeExecution(Tool):
                 set.get("code_exec_dialog_timeout", defaults["dialog_timeout"])
             ),
         }
+
+    def _check_repetitive_terminal_command(
+        self, session: int, command: str
+    ) -> tuple[str | None, bool]:
+        normalized = " ".join(command.split()).strip()
+        if not normalized:
+            return None, False
+        # Focus on read-only commands that should not need repeated execution.
+        if not self._is_read_only_terminal_command(normalized):
+            return None, False
+
+        now = time.time()
+        key = f"s{session}:{normalized}"
+        meta: dict = self.agent.get_data("_cet_terminal_repeat_meta") or {}
+        prev = meta.get(key, {})
+        last_ts = float(prev.get("ts", 0) or 0)
+        count = int(prev.get("count", 0) or 0)
+        if (now - last_ts) <= 90:
+            count += 1
+        else:
+            count = 1
+        meta[key] = {"count": count, "ts": now}
+        self.agent.set_data("_cet_terminal_repeat_meta", meta)
+
+        if count >= 4:
+            return (
+                "[TERMINAL_GUARD:REPETITIVE_READ] Repeated identical read-only terminal command "
+                f"{count} times in a short window (`{normalized}`). "
+                "Do not retry the same command again in this turn. Use the previous output and move to the next required step.",
+                True,
+            )
+        return None, False
+
+    def _check_repetitive_file_read(
+        self, abs_path: str, content: str
+    ) -> tuple[str | None, bool]:
+        now = time.time()
+        sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        key = f"file_read:{abs_path}:{sha}"
+        meta: dict = self.agent.get_data("_cet_file_read_meta") or {}
+        prev = meta.get(key, {})
+        last_ts = float(prev.get("ts", 0) or 0)
+        count = int(prev.get("count", 0) or 0)
+        if (now - last_ts) <= 90:
+            count += 1
+        else:
+            count = 1
+        meta[key] = {"count": count, "ts": now}
+        self.agent.set_data("_cet_file_read_meta", meta)
+        if count >= 3:
+            return (
+                "[READ_GUARD:REPETITIVE_FILE_READ] Repeated identical file read "
+                f"{count} times in a short window ({abs_path}). "
+                "Use the already returned content and proceed to the next requested step.",
+                True,
+            )
+        return None, False
+
+    def _is_read_only_terminal_command(self, command: str) -> bool:
+        prefixes = (
+            "cat ",
+            "head ",
+            "tail ",
+            "sed -n",
+            "wc ",
+            "ls ",
+            "stat ",
+            "grep ",
+            "rg ",
+            "find ",
+        )
+        return command.startswith(prefixes)
+
+    def _extract_simple_cat_path(self, command: str) -> str | None:
+        normalized = " ".join(command.split()).strip()
+        m = re.match(r"^cat\s+([^\s|;&<>]+)$", normalized)
+        if not m:
+            return None
+        return m.group(1)
+
+    def _strip_runtime_noise_lines(self, output: str) -> str:
+        noise_markers = (
+            "DeprecationWarning: GitWildMatchPattern",
+            "RequestsDependencyWarning: urllib3",
+            "patterns = [pattern_factory(line) for line in lines if line]",
+            "regex, include = self.pattern_to_regex(pattern)",
+        )
+        kept = []
+        for line in output.splitlines():
+            if any(marker in line for marker in noise_markers):
+                continue
+            kept.append(line)
+        return "\n".join(kept)
 
     async def ensure_cwd(self) -> str | None:
         project_name = projects.get_context_project_name(self.agent.context)

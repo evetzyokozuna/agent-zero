@@ -1,4 +1,6 @@
 import asyncio, random, string, threading, time
+import hashlib
+import json
 import nest_asyncio
 import os
 
@@ -992,6 +994,19 @@ class Agent:
                 tool_args=tool_args,
                 set=set,
             )
+            repeat_guard_message = self._check_repeated_tool_action_guard(
+                raw_tool_name=raw_tool_name,
+                execute_tool_args=execute_tool_args,
+                set=set,
+            )
+            if repeat_guard_message:
+                self.hist_add_warning(repeat_guard_message)
+                PrintStyle(font_color="orange", padding=True).print(repeat_guard_message)
+                self.context.log.log(
+                    type="warning",
+                    content=f"{self.agent_name}: {repeat_guard_message}",
+                )
+                return repeat_guard_message
 
             tool_name = raw_tool_name  # Initialize tool_name with raw_tool_name
             tool_method = None  # Initialize tool_method
@@ -1057,6 +1072,13 @@ class Agent:
                     await tool.after_execution(response)
                     await self.handle_intervention()
 
+                    hard_stop_message = self._check_hard_stop_tool_response(
+                        tool_name=raw_tool_name,
+                        tool_result=(response.message or ""),
+                    )
+                    if hard_stop_message:
+                        return hard_stop_message
+
                     if response.break_loop:
                         return response.message
                 finally:
@@ -1079,6 +1101,82 @@ class Agent:
                 type="warning",
                 content=f"{self.agent_name}: Message misformat, no valid tool request found.",
             )
+
+    def _check_hard_stop_tool_response(self, tool_name: str, tool_result: str) -> str | None:
+        text = (tool_result or "").lower()
+        if "context_missing_hard_stop" in text or "no context id provided" in text:
+            return self._terminate_for_guardrail(
+                reason="missing context id in tool/API flow",
+                detail=f"tool={tool_name}; hard-stop to prevent retry loops",
+            )
+        return None
+
+    def _check_repeated_tool_action_guard(
+        self,
+        raw_tool_name: str,
+        execute_tool_args: dict[str, Any],
+        set: settings.Settings,
+    ) -> str | None:
+        threshold = int(set.get("tool_repeat_signature_threshold", 1))
+        if threshold < 0:
+            threshold = 0
+        window_seconds = int(set.get("tool_repeat_signature_window_seconds", 180))
+        if window_seconds < 1:
+            window_seconds = 1
+
+        signature = self._build_tool_action_signature(raw_tool_name, execute_tool_args)
+        now = time.time()
+        state = self.loop_data.params_persistent.setdefault("_tool_action_signatures", {})
+        prev = state.get(signature, {})
+        last_ts = float(prev.get("ts", 0) or 0)
+        count = int(prev.get("count", 0) or 0)
+        if (now - last_ts) <= window_seconds:
+            count += 1
+        else:
+            count = 1
+        state[signature] = {
+            "count": count,
+            "ts": now,
+            "tool_name": raw_tool_name,
+        }
+        self.loop_data.params_persistent["_tool_action_signatures"] = state
+
+        max_allowed = threshold + 1  # first execution + N repeats
+        if count > max_allowed:
+            return (
+                "[TOOL_GUARD:REPEATED_ACTION_HARD_STOP] "
+                f"Blocked repeated identical tool action for `{raw_tool_name}` "
+                f"(count={count}, max_allowed={max_allowed}, window={window_seconds}s). "
+                "Do not retry the same call again in this turn; switch strategy or ask for user clarification."
+            )
+        return None
+
+    def _build_tool_action_signature(
+        self, raw_tool_name: str, execute_tool_args: dict[str, Any]
+    ) -> str:
+        normalized = self._normalize_tool_signature_payload(execute_tool_args)
+        payload = json.dumps(
+            normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True, default=str
+        )
+        digest = hashlib.sha256(f"{raw_tool_name}|{payload}".encode("utf-8")).hexdigest()
+        return digest
+
+    def _normalize_tool_signature_payload(self, value: Any) -> Any:
+        if isinstance(value, str):
+            compact = " ".join(value.split())
+            if len(compact) > 512:
+                short_hash = hashlib.sha256(compact.encode("utf-8")).hexdigest()[:16]
+                return f"<str:{len(compact)}:{short_hash}>"
+            return compact
+        if isinstance(value, dict):
+            return {k: self._normalize_tool_signature_payload(v) for k, v in sorted(value.items())}
+        if isinstance(value, list):
+            return [self._normalize_tool_signature_payload(v) for v in value]
+        if isinstance(value, tuple):
+            return tuple(self._normalize_tool_signature_payload(v) for v in value)
+        if isinstance(value, set):
+            return sorted(self._normalize_tool_signature_payload(v) for v in value)
+        return value
 
     def _normalize_tool_args(
         self,

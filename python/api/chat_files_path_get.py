@@ -7,7 +7,10 @@ class GetChatFilesPath(ApiHandler):
     async def process(self, input: dict, request: Request) -> dict | Response:
         ctxid = input.get("ctxid", "")
         if not ctxid:
-            raise Exception("No context id provided")
+            raise Exception(
+                "[CONTEXT_MISSING_HARD_STOP] No context id provided. "
+                "This request is non-retryable in the current turn; require a fresh context-bound request."
+            )
         context = self.use_context(ctxid)
 
         project_name = projects.get_context_project_name(context)

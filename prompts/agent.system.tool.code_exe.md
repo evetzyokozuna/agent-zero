@@ -13,6 +13,7 @@ important: check code for placeholders or demo data; replace with real variables
 important: avoid very large inline code payloads; prefer chunked writes for large file content
 important: respect A0_SET_code_exec_max_input_chars; if content is long, split it into multiple smaller tool calls
 important: for file writes, prefer runtime "file" with path/content/append over heredoc or triple-quoted python
+important: for simple file reads, prefer a direct `cat /absolute/path/to/file` command only once; do not repeat identical reads after content is returned
 important: when replacing an entire file, do exactly one runtime "file" call with append=false and the full content; do not follow with extra overwrite calls unless user explicitly asks
 important: if chunking is required, first chunk must be append=false and all remaining chunks must be append=true to the same path
 important: after a write, verify using runtime "terminal" (wc -c and optional marker grep) and report byte count before making more write calls
