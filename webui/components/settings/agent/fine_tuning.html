@@ -12,6 +12,25 @@
             Structured controls for autonomy and execution knobs. These settings define how the agent behaves under long-running workloads.
           </div>
 
+          <div class="env-override-panel" x-show="$store.settings.getEnvOverrideKeys().length > 0">
+            <div class="env-override-title">Active .env Overrides Detected</div>
+            <div class="env-override-description">
+              Values listed here are currently controlled by <code>A0_SET_*</code> in <code>.env</code>. UI saves to <code>settings.json</code> will be overridden on read. Use the action button to explicitly persist the current UI value into <code>.env</code>.
+            </div>
+            <template x-for="key in $store.settings.getEnvOverrideKeys()" :key="key">
+              <div class="env-override-row">
+                <div class="env-override-key" x-text="key"></div>
+                <div class="env-override-values">
+                  <span class="env-badge">.env: <span x-text="$store.settings.getEnvOverrideValue(key)"></span></span>
+                  <span class="ui-badge">UI: <span x-text="$store.settings.settings?.[key]"></span></span>
+                </div>
+                <button class="button button-small" @click="$store.settings.persistSettingToEnv(key)">
+                  Overwrite .env with UI value
+                </button>
+              </div>
+            </template>
+          </div>
+
           <div class="subsection-title">Guard Switches (Adoption Controls)</div>
           <div class="section-description">
             These switches allow gradual adoption of hardening behaviors. Keeping guards off preserves legacy behavior but increases risk of loops, stale retries, and malformed write/read cascades.
@@ -701,6 +720,50 @@
 </html>
 
 <style>
+  .env-override-panel {
+    margin: 0.75rem 0 1rem;
+    border: 1px solid var(--color-border, rgba(255, 255, 255, 0.12));
+    border-radius: 8px;
+    padding: 0.75rem;
+    background: rgba(255, 173, 51, 0.08);
+  }
+  .env-override-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    margin-bottom: 0.35rem;
+  }
+  .env-override-description {
+    font-size: 0.85rem;
+    opacity: 0.9;
+    margin-bottom: 0.5rem;
+  }
+  .env-override-row {
+    display: grid;
+    grid-template-columns: 1fr 2fr auto;
+    gap: 0.5rem;
+    align-items: center;
+    margin: 0.35rem 0;
+  }
+  .env-override-key {
+    font-family: monospace;
+    font-size: 0.85rem;
+    word-break: break-word;
+  }
+  .env-override-values {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+  }
+  .env-badge, .ui-badge {
+    font-size: 0.78rem;
+    border: 1px solid var(--color-border, rgba(255, 255, 255, 0.2));
+    border-radius: 999px;
+    padding: 0.15rem 0.5rem;
+  }
+  .button-small {
+    font-size: 0.78rem;
+    padding: 0.25rem 0.5rem;
+  }
   .subsection-title {
     font-size: 1rem;
     font-weight: 600;

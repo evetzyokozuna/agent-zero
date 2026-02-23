@@ -45,11 +45,29 @@ A dedicated **Fine-Tuning** panel is available in Settings with sectioned contro
 
 This is the recommended path for interactive tuning and validation.
 
+When `.env` contains `A0_SET_<setting_name>`, that key is treated as an active override at read time. The Fine-Tuning panel now shows an **Active .env Overrides Detected** section that lists:
+
+- setting key
+- `.env` value currently in force
+- current UI value
+
+For each listed key, use **Overwrite .env with UI value** to explicitly persist the current UI value into `.env` so the override remains aligned.
+
 Fine-Tuning panel preview:
 
 ![Fine-Tuning Settings Panel](../res/usage/autonomy-fine-tuning-panel.png)
 
 ## Important behavior notes
+
+### Settings precedence and persistence
+
+Settings precedence is:
+
+1. `.env` overrides (`A0_SET_*`) at read time
+2. `settings.json` values saved from the UI
+3. runtime defaults
+
+Implication: a normal UI save updates `settings.json`, but any key with an active `A0_SET_*` override will resolve back to the `.env` value when settings are read again. Use the explicit overwrite action in Fine-Tuning when you want a UI change to become the new `.env` source of truth.
 
 ### Tool payload spill is not chunking
 

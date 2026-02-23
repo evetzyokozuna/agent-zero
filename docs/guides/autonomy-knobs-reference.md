@@ -4,6 +4,13 @@ This reference documents autonomy and guardrail settings introduced in `feature/
 
 All keys use `A0_SET_<setting_name>`.
 
+## UI and `.env` override behavior
+
+- If `A0_SET_<setting_name>` exists in `.env`, it overrides UI-saved `settings.json` for that key at read time.
+- Fine-Tuning surfaces active overrides in an **Active .env Overrides Detected** panel.
+- Use **Overwrite .env with UI value** to explicitly update the corresponding `A0_SET_*` key from the current UI value.
+- Use a normal UI save when no `.env` override is active for that key.
+
 Example:
 
 - `A0_SET_agent_max_iterations=100`

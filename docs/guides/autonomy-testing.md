@@ -13,6 +13,8 @@ This guide provides a repeatable validation flow for autonomy guardrails and kno
 - Runtime built from `feature/autonomy` changes
 - Persistent data backed up before destructive tests
 - Settings can be changed through UI or `A0_SET_*` env keys
+- If a key is overridden by `A0_SET_*`, verify it appears in Fine-Tuning under **Active .env Overrides Detected**
+- For override-backed keys, use **Overwrite .env with UI value** before validating behavior changes
 - Profile examples available in `docs/setup/env-examples/`
 
 ---

@@ -140,6 +140,52 @@ const model = {
     }
   },
 
+  get envOverrides() {
+    return this.additional?.runtime_settings?.env_overrides || {};
+  },
+
+  isEnvOverridden(key) {
+    return Object.prototype.hasOwnProperty.call(this.envOverrides, key);
+  },
+
+  getEnvOverrideValue(key) {
+    return this.envOverrides[key];
+  },
+
+  getEnvOverrideKeys() {
+    return Object.keys(this.envOverrides || {}).sort();
+  },
+
+  async persistSettingToEnv(key) {
+    if (!this.settings || !(key in this.settings)) {
+      toast(`Cannot persist unknown setting: ${key}`, "error");
+      return false;
+    }
+    this.isLoading = true;
+    try {
+      const response = await API.callJsonApi("settings_env_override_set", {
+        key,
+        value: this.settings[key],
+      });
+      if (response && response.settings) {
+        this.settings = response.settings;
+        this.additional = response.additional || this.additional;
+        toast(`Saved ${key} to .env override`, "success");
+        document.dispatchEvent(
+          new CustomEvent("settings-updated", { detail: response.settings })
+        );
+        return true;
+      }
+      throw new Error("Invalid response while saving env override");
+    } catch (e) {
+      console.error("Failed to persist env override:", e);
+      toast(`Failed to save ${key} to .env: ${e.message}`, "error");
+      return false;
+    } finally {
+      this.isLoading = false;
+    }
+  },
+
   // Close the modal
   closeSettings() {
     window.closeModal("settings/settings.html");

@@ -336,6 +336,7 @@ def convert_out(settings: Settings) -> SettingsOutput:
                 default_settings["uvicorn_access_logs_enabled"],
             )
         ),
+        "env_overrides": get_env_overrides(list(current.keys())),
     }
 
     additional["chat_providers"] = _ensure_option_present(additional.get("chat_providers"), current.get("chat_model_provider"))
@@ -498,6 +499,61 @@ def _apply_env_overrides(settings: Settings) -> Settings:
         current = copy.get(key, fallback)
         copy[key] = get_default_value(key, current)
     return copy
+
+
+def get_env_overrides(setting_keys: list[str] | None = None) -> dict[str, str]:
+    keys = setting_keys or list(get_default_settings().keys())
+    overrides: dict[str, str] = {}
+    for key in keys:
+        env_key = f"A0_SET_{key}"
+        env_value = dotenv.get_dotenv_value(env_key, dotenv.get_dotenv_value(env_key.upper(), None))
+        if env_value is not None:
+            overrides[key] = str(env_value)
+    return overrides
+
+
+def _coerce_setting_value_for_type(key: str, value: Any, default_value: Any) -> Any:
+    if isinstance(default_value, bool):
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in ("true", "1", "yes", "on")
+    if isinstance(default_value, int) and not isinstance(default_value, bool):
+        return int(value)
+    if isinstance(default_value, float):
+        return float(value)
+    if isinstance(default_value, dict):
+        if isinstance(value, dict):
+            return value
+        raw = str(value)
+        if key.endswith("_kwargs") or key == "browser_http_headers":
+            return _env_to_dict(raw)
+        return json.loads(raw)
+    if isinstance(default_value, str):
+        return str(value)
+    return value
+
+
+def _serialize_setting_value_for_env(value: Any, default_value: Any) -> str:
+    if isinstance(default_value, bool):
+        return "true" if bool(value) else "false"
+    if isinstance(default_value, int) and not isinstance(default_value, bool):
+        return str(int(value))
+    if isinstance(default_value, float):
+        return str(float(value))
+    if isinstance(default_value, dict):
+        return json.dumps(value, separators=(",", ":"))
+    return str(value)
+
+
+def save_env_override(key: str, value: Any) -> Settings:
+    defaults = get_default_settings()
+    if key not in defaults:
+        raise ValueError(f"Unknown setting key: {key}")
+    default_value = defaults[key]
+    coerced = _coerce_setting_value_for_type(key, value, default_value)
+    serialized = _serialize_setting_value_for_env(coerced, default_value)
+    dotenv.save_dotenv_value(f"A0_SET_{key}", serialized)
+    return reload_settings()
 
 
 def _adjust_to_version(settings: Settings, default: Settings):
