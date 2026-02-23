@@ -1,10 +1,8 @@
 # Autonomy Knobs Reference
 
-This reference documents autonomy-related settings introduced in `feature/autonomy`.
+This reference documents autonomy and guardrail settings introduced in `feature/autonomy`.
 
-All keys use:
-
-- `A0_SET_<setting_name>`
+All keys use `A0_SET_<setting_name>`.
 
 Example:
 
@@ -13,29 +11,84 @@ Example:
 
 ---
 
-## 1) Monologue Safety Floor
+## Guard Switches (Adoption Controls)
 
-- `agent_max_iterations`
-  - Hard cap on iterations in one monologue cycle.
-- `agent_max_runtime_seconds`
-  - Hard cap on monologue wall-clock runtime.
-- `agent_max_consecutive_misformats`
-  - Terminates repeated malformed tool-request output loops.
-- `agent_max_consecutive_repairable_errors`
-  - Terminates repeated recoverable-error loops.
+These switches let you keep upgraded systems behavior-compatible while selectively enabling hardening.
+
+Recommended for production: enable all (`true`).
+Backward-compatibility default in runtime for newly introduced switches: `false`.
+
+- `agent_guardrails_enabled`
+  - Master switch for monologue iteration/runtime/misformat guardrails.
+  - Risk when off: runaway turn loops.
+- `agent_guard_context_hard_stop_enabled`
+  - Hard-stops turn on missing context id failures.
+  - Risk when off: repeated invalid retries after context loss.
+- `agent_guard_repeated_tool_action_enabled`
+  - Enables repeated identical tool action breaker.
+  - Risk when off: high-frequency retry attractor loops.
+- `subordinate_guardrails_enabled`
+  - Enables subordinate depth/call/runtime guardrails.
+  - Risk when off: delegation cascades and runaway subordinate chains.
+- `code_exec_guard_unterminated_heredoc_enabled`
+  - Rejects truncated heredoc terminal commands.
+  - Risk when off: shell enters waiting mode and loops.
+- `code_exec_guard_unbalanced_shell_quote_enabled`
+  - Rejects malformed quoted shell commands.
+  - Risk when off: waiting-mode command hangs and retries.
+- `code_exec_guard_repetitive_terminal_read_enabled`
+  - Detects repeated identical read-only terminal commands.
+  - Risk when off: read spam loops.
+- `code_exec_guard_repetitive_file_read_enabled`
+  - Detects repeated identical direct file reads.
+  - Risk when off: no-op file read churn.
+- `code_exec_guard_regressive_overwrite_enabled`
+  - Blocks likely regressive full-overwrite loops and triggers recovery mode.
+  - Risk when off: destructive shrinking rewrites.
+- `code_exec_guard_write_verify_enabled`
+  - Verifies expected/actual bytes after overwrite.
+  - Risk when off: silent partial writes.
+- `code_exec_guard_same_file_op_ceiling_enabled`
+  - Caps same-file read/write repeat attempts in a window.
+  - Risk when off: same-path operation churn.
+- `code_exec_guard_strategy_block_enabled`
+  - After guardrail hit, blocks same strategy class temporarily.
+  - Risk when off: repeated equivalent failing strategy.
+- `code_exec_guard_simple_cat_direct_read_enabled`
+  - Routes simple `cat /path` calls to deterministic file-read flow.
+  - Risk when off: shell read behavior can be less deterministic under load.
 
 ---
 
-## 2) Tool Argument Payload Controls
+## 1) Monologue Safety Floor
+
+- `agent_max_iterations`
+- `agent_max_runtime_seconds`
+- `agent_max_consecutive_misformats`
+- `agent_max_consecutive_repairable_errors`
+
+Lower values stop loops sooner but may cut off valid long tasks.
+Higher values improve tolerance but increase runaway risk when guard switches are off.
+
+---
+
+## 2) Tool Action Loop Breakers
+
+- `tool_repeat_signature_threshold`
+  - Allowed repeats of identical tool signature per window.
+  - Lower: stricter anti-looping. Higher: more retry tolerance.
+- `tool_repeat_signature_window_seconds`
+  - Sliding window for repeat counting.
+  - Larger: catches slower loops. Smaller: less aggressive.
+
+---
+
+## 3) Tool Argument Payload Controls
 
 - `tool_args_max_chars`
-  - Max total tool payload size before rejection.
 - `tool_args_spill_threshold_chars`
-  - Per-string threshold for spill-to-file rewrite.
 - `tool_args_spill_dir`
-  - Relative spill file directory.
 - `tool_args_autorewrite_enabled`
-  - Enables spill/resolve behavior.
 
 Notes:
 
@@ -44,107 +97,89 @@ Notes:
 
 ---
 
-## 3) Code Execution Reliability
+## 4) Code Execution Reliability and File Guards
+
+Core runtime controls:
 
 - `code_exec_first_output_timeout`
-  - Max wait for first command output.
 - `code_exec_between_output_timeout`
-  - Max idle gap between output chunks.
 - `code_exec_max_exec_timeout`
-  - Hard cap on total command runtime.
 - `code_exec_dialog_timeout`
-  - Early-return detection for interactive prompt waits.
 - `code_exec_output_max_chars`
-  - Max in-band output returned to the model.
 - `code_exec_auto_dump_large_output`
-  - Auto-save oversized output to file.
 - `code_exec_dump_dir`
-  - Relative output dump directory.
 - `code_exec_prefer_python_file_write`
-  - When true, terminal heredoc file writes are blocked or converted to Python file write paths.
 - `code_exec_max_input_chars`
-  - Maximum allowed input size for `code_execution_tool` `code` payloads before early rejection.
+
+Regressive overwrite controls:
+
 - `code_exec_regressive_guard_retry_threshold`
-  - Number of guarded full-overwrite retries allowed before forcing a loop break.
 - `code_exec_regressive_guard_retry_window_seconds`
-  - Sliding window used to reset guarded retry count after inactivity.
+
+Same-file ceilings and strategy windows:
+
+- `code_exec_same_file_read_ceiling`
+- `code_exec_same_file_write_ceiling`
+- `code_exec_file_op_window_seconds`
+- `code_exec_strategy_block_ttl_seconds`
+
+Expected outcomes:
+
+- Lower ceilings / lower retry thresholds: fail fast, fewer loops, higher intervention rate.
+- Higher ceilings / higher thresholds: more self-repair attempts, higher loop risk.
+- Larger windows/TTL: stronger suppression of repeated failure patterns.
 
 ---
 
-## 4) Subordinate Delegation Controls
+## 5) Subordinate Delegation Controls
 
 - `subordinate_max_depth`
-  - Max subordinate nesting depth.
 - `subordinate_max_calls_per_turn`
-  - Max subordinate calls per parent turn.
 - `subordinate_max_runtime_seconds`
-  - Runtime cap per subordinate execution.
 
 ---
 
-## 5) Queue / Backpressure Controls
+## 6) Queue / Backpressure Controls
 
 - `queue_max_items`
-  - Max number of queued items.
 - `queue_max_total_chars`
-  - Max total text chars in queue.
-- `queue_drop_policy`
-  - Overflow handling policy:
-    - `drop_oldest`
-    - `drop_newest`
-    - `reject`
+- `queue_drop_policy` (`drop_oldest`, `drop_newest`, `reject`)
 - `queue_send_all_max_items`
-  - Max items aggregated in send-all operation.
 
 ---
 
-## 6) Memory Load Guardrails
+## 7) Memory Load Guardrails
 
 - `memory_load_limit_max`
-  - Upper bound for memory load limit parameter.
 - `memory_load_query_max_chars`
-  - Query-size clamp.
 - `memory_load_response_max_chars`
-  - Response-size clamp.
 
 ---
 
-## 7) History Compression Tuning
+## 8) History Compression Tuning
 
 - `history_compression_target_ratio`
-  - Overall compression target.
 - `history_current_topic_ratio`
-  - Allocation for current topic detail.
 - `history_topic_ratio`
-  - Allocation for topic summaries.
 - `history_bulk_ratio`
-  - Allocation for bulk/older summaries.
 - `history_attention_current_ratio`
-  - Current-context weighting for compression.
 - `history_attention_past_ratio`
-  - Past-context weighting for compression.
 - `history_compress_max_passes`
-  - Max repeated compression passes.
 
 ---
 
-## 8) Runtime Budgets
+## 9) Runtime Budgets
 
-- `runtime_turn_budget_seconds`
-  - Optional per-turn budget (`0` disables).
-- `runtime_task_budget_seconds`
-  - Optional per-task budget (`0` disables).
-- `runtime_subordinate_budget_seconds`
-  - Optional subordinate budget (`0` disables).
+- `runtime_turn_budget_seconds` (`0` disables)
+- `runtime_task_budget_seconds` (`0` disables)
+- `runtime_subordinate_budget_seconds` (`0` disables)
 
 ---
 
-## 9) Model Call Parameters (commonly used with autonomy)
+## 10) Model Call Parameters (commonly used with autonomy)
 
 - `chat_model_kwargs`
-  - Per-chat-model LiteLLM call kwargs.
 - `litellm_global_kwargs`
-  - Global LiteLLM kwargs applied across calls.
 
 Common use:
 
@@ -152,9 +187,10 @@ Common use:
 
 ---
 
-## Tuning workflow
+## Tuning Workflow
 
-1. Start from `docs/setup/env-examples/profile_balanced_production.env`
-2. Adjust one knob family at a time
-3. Validate using `guides/autonomy-testing.md`
-4. Promote stable values into your deployment profile
+1. Start from `docs/setup/env-examples/profile_balanced_production.env`.
+2. Enable guard switches first.
+3. Tune thresholds/windows one family at a time.
+4. Validate with `guides/autonomy-testing.md`.
+5. Promote stable values into deployment profile.

@@ -8,6 +8,7 @@ Rules:
 - Non-empty values are intentional profile settings and should be applied.
 - API key fields are intentionally present and empty in these examples.
 - Each profile includes all known `A0_SET_*` keys from runtime settings (set or empty).
+- Guard-switch keys are included so operators can choose staged adoption (`false`) or strict mode (`true`).
 
 Profiles included:
 
@@ -19,6 +20,7 @@ Profiles included:
 Related docs:
 
 - `../../guides/autonomy-overview.md`
+- `../../guides/autonomy-guards-reference.md`
 - `../../guides/autonomy-knobs-reference.md`
 - `../../guides/autonomy-testing.md`
 

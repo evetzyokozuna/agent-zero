@@ -12,6 +12,180 @@
             Structured controls for autonomy and execution knobs. These settings define how the agent behaves under long-running workloads.
           </div>
 
+          <div class="subsection-title">Guard Switches (Adoption Controls)</div>
+          <div class="section-description">
+            These switches allow gradual adoption of hardening behaviors. Keeping guards off preserves legacy behavior but increases risk of loops, stale retries, and malformed write/read cascades.
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Enable monologue guardrails</div>
+              <div class="field-description">Master switch for iteration/runtime/misformat guardrails. OFF increases risk of runaway turns.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.agent_guardrails_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Hard-stop on missing context</div>
+              <div class="field-description">Immediately terminates turn on context-id missing failures. OFF may allow repeated invalid retries.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.agent_guard_context_hard_stop_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Repeated tool-action breaker</div>
+              <div class="field-description">Blocks repeated identical tool calls in one turn. OFF can reintroduce retry attractor loops.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.agent_guard_repeated_tool_action_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Enable subordinate guardrails</div>
+              <div class="field-description">Enforces subordinate depth/calls/runtime limits. OFF may permit costly delegation cascades.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.subordinate_guardrails_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Guard unterminated heredoc</div>
+              <div class="field-description">Rejects truncated heredoc terminal writes before shell waiting mode. OFF may hang command sessions.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.code_exec_guard_unterminated_heredoc_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Guard unbalanced shell quotes</div>
+              <div class="field-description">Rejects malformed quoted terminal commands early. OFF may send shell into waiting mode.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.code_exec_guard_unbalanced_shell_quote_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Guard repetitive terminal reads</div>
+              <div class="field-description">Detects repeated identical read-only terminal commands in short windows. OFF can allow read spam loops.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.code_exec_guard_repetitive_terminal_read_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Guard repetitive file reads</div>
+              <div class="field-description">Stops repeated identical file reads once content is already available. OFF can increase no-op file read churn.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.code_exec_guard_repetitive_file_read_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Guard regressive full overwrites</div>
+              <div class="field-description">Blocks shrinking append=false rewrite loops and enforces recovery mode. OFF increases risk of destructive rewrite retries.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.code_exec_guard_regressive_overwrite_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Verify write byte counts</div>
+              <div class="field-description">Compares expected vs actual bytes after overwrite. OFF may hide partial/truncated writes.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.code_exec_guard_write_verify_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Same-file op ceilings</div>
+              <div class="field-description">Caps repeated reads/writes per file in a short window. OFF allows repeated same-path churn.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.code_exec_guard_same_file_op_ceiling_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Guardrail strategy-block mode</div>
+              <div class="field-description">After a guardrail hit, blocks same strategy class for that path. OFF may keep retrying equivalent failing strategy.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.code_exec_guard_strategy_block_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Direct cat-to-file-read routing</div>
+              <div class="field-description">Routes simple `cat /path` to deterministic file-read runtime. OFF keeps shell cat behavior.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.code_exec_guard_simple_cat_direct_read_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
           <div class="subsection-title">Monologue Guardrails</div>
 
           <div class="field">
@@ -214,6 +388,68 @@
             </div>
             <div class="field-control">
               <input type="number" min="1" step="1" x-model.number="$store.settings.settings.code_exec_regressive_guard_retry_window_seconds" />
+            </div>
+          </div>
+
+          <div class="subsection-title">Guard Thresholds and Windows</div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Repeated tool action threshold</div>
+              <div class="field-description">Allowed repeat count for identical tool calls. Lower = stricter anti-looping; higher = more retry tolerance.</div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="0" step="1" x-model.number="$store.settings.settings.tool_repeat_signature_threshold" />
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Repeated tool action window (seconds)</div>
+              <div class="field-description">Window used to count repeat tool signatures. Larger windows catch slower loops; smaller windows are less aggressive.</div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="1" step="1" x-model.number="$store.settings.settings.tool_repeat_signature_window_seconds" />
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Same-file read ceiling</div>
+              <div class="field-description">Max repeated reads of same file in window. Lower stops loops sooner; higher permits more retries.</div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="1" step="1" x-model.number="$store.settings.settings.code_exec_same_file_read_ceiling" />
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Same-file write ceiling</div>
+              <div class="field-description">Max repeated writes of same file in window. Lower protects against rewrite churn; higher allows more repair attempts.</div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="1" step="1" x-model.number="$store.settings.settings.code_exec_same_file_write_ceiling" />
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">File-op window (seconds)</div>
+              <div class="field-description">Window for counting same-file read/write operations. Larger values detect wider loops.</div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="1" step="1" x-model.number="$store.settings.settings.code_exec_file_op_window_seconds" />
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Strategy-block TTL (seconds)</div>
+              <div class="field-description">How long blocked strategies remain suppressed after a guard hit. Higher values enforce stronger strategy switching.</div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="1" step="1" x-model.number="$store.settings.settings.code_exec_strategy_block_ttl_seconds" />
             </div>
           </div>
 

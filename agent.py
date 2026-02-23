@@ -584,6 +584,8 @@ class Agent:
         consecutive_misformats: int,
         consecutive_repairable_errors: int,
     ) -> str | None:
+        if not bool(set.get("agent_guardrails_enabled", False)):
+            return None
         max_iterations = int(set.get("agent_max_iterations", 80))
         max_runtime_seconds = int(set.get("agent_max_runtime_seconds", 900))
         max_consecutive_misformats = int(
@@ -994,19 +996,20 @@ class Agent:
                 tool_args=tool_args,
                 set=set,
             )
-            repeat_guard_message = self._check_repeated_tool_action_guard(
-                raw_tool_name=raw_tool_name,
-                execute_tool_args=execute_tool_args,
-                set=set,
-            )
-            if repeat_guard_message:
-                self.hist_add_warning(repeat_guard_message)
-                PrintStyle(font_color="orange", padding=True).print(repeat_guard_message)
-                self.context.log.log(
-                    type="warning",
-                    content=f"{self.agent_name}: {repeat_guard_message}",
+            if bool(set.get("agent_guard_repeated_tool_action_enabled", False)):
+                repeat_guard_message = self._check_repeated_tool_action_guard(
+                    raw_tool_name=raw_tool_name,
+                    execute_tool_args=execute_tool_args,
+                    set=set,
                 )
-                return repeat_guard_message
+                if repeat_guard_message:
+                    self.hist_add_warning(repeat_guard_message)
+                    PrintStyle(font_color="orange", padding=True).print(repeat_guard_message)
+                    self.context.log.log(
+                        type="warning",
+                        content=f"{self.agent_name}: {repeat_guard_message}",
+                    )
+                    return repeat_guard_message
 
             tool_name = raw_tool_name  # Initialize tool_name with raw_tool_name
             tool_method = None  # Initialize tool_method
@@ -1103,6 +1106,9 @@ class Agent:
             )
 
     def _check_hard_stop_tool_response(self, tool_name: str, tool_result: str) -> str | None:
+        set = settings.get_settings()
+        if not bool(set.get("agent_guard_context_hard_stop_enabled", False)):
+            return None
         text = (tool_result or "").lower()
         if "context_missing_hard_stop" in text or "no context id provided" in text:
             return self._terminate_for_guardrail(

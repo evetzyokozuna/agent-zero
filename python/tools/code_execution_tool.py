@@ -166,17 +166,20 @@ class CodeExecution(Tool):
                 code=code, session=session, reset=reset
             )
         elif runtime == "terminal":
-            repetitive_msg, repetitive_break = self._check_repetitive_terminal_command(
-                session=session, command=code
-            )
-            if repetitive_msg:
-                PrintStyle.warning(repetitive_msg)
-                response = self.agent.read_prompt("fw.code.info.md", info=repetitive_msg)
-                return Response(message=response, break_loop=repetitive_break)
-            cat_path = self._extract_simple_cat_path(code)
-            if cat_path:
-                response, break_loop = await self.execute_file_read(path=cat_path)
-                return Response(message=response, break_loop=break_loop)
+            set = settings.get_settings()
+            if bool(set.get("code_exec_guard_repetitive_terminal_read_enabled", False)):
+                repetitive_msg, repetitive_break = self._check_repetitive_terminal_command(
+                    session=session, command=code
+                )
+                if repetitive_msg:
+                    PrintStyle.warning(repetitive_msg)
+                    response = self.agent.read_prompt("fw.code.info.md", info=repetitive_msg)
+                    return Response(message=response, break_loop=repetitive_break)
+            if bool(set.get("code_exec_guard_simple_cat_direct_read_enabled", False)):
+                cat_path = self._extract_simple_cat_path(code)
+                if cat_path:
+                    response, break_loop = await self.execute_file_read(path=cat_path)
+                    return Response(message=response, break_loop=break_loop)
             response = await self.execute_terminal_command(
                 command=code, session=session, reset=reset
             )
@@ -278,11 +281,21 @@ class CodeExecution(Tool):
         self, session: int, command: str, reset: bool = False
     ):
         set = settings.get_settings()
+        guard_unterminated_heredoc = bool(
+            set.get("code_exec_guard_unterminated_heredoc_enabled", False)
+        )
+        guard_unbalanced_shell_quote = bool(
+            set.get("code_exec_guard_unbalanced_shell_quote_enabled", False)
+        )
         prefer_python_file_write = bool(
             set.get("code_exec_prefer_python_file_write", False)
         )
         if prefer_python_file_write and self._has_heredoc(command):
-            unterminated_marker = self._find_unterminated_heredoc_marker(command)
+            unterminated_marker = (
+                self._find_unterminated_heredoc_marker(command)
+                if guard_unterminated_heredoc
+                else None
+            )
             if unterminated_marker:
                 info = (
                     "Detected an unterminated heredoc in terminal command "
@@ -310,7 +323,11 @@ class CodeExecution(Tool):
             PrintStyle.warning(info)
             return self.agent.read_prompt("fw.code.info.md", info=info)
 
-        unterminated_marker = self._find_unterminated_heredoc_marker(command)
+        unterminated_marker = (
+            self._find_unterminated_heredoc_marker(command)
+            if guard_unterminated_heredoc
+            else None
+        )
         if unterminated_marker:
             info = (
                 "Detected an unterminated heredoc in terminal command "
@@ -320,7 +337,11 @@ class CodeExecution(Tool):
             )
             PrintStyle.warning(info)
             return self.agent.read_prompt("fw.code.info.md", info=info)
-        quote_error = self._find_unbalanced_shell_quote_error(command)
+        quote_error = (
+            self._find_unbalanced_shell_quote_error(command)
+            if guard_unbalanced_shell_quote
+            else None
+        )
         if quote_error:
             info = (
                 "Detected malformed shell quoting in terminal command; "
@@ -654,17 +675,19 @@ class CodeExecution(Tool):
     async def execute_file_write(
         self, path: str, content: str, append: bool = False
     ) -> tuple[str, bool]:
+        set = settings.get_settings()
         normalized = files.normalize_a0_path(path)
         mode = "a" if append else "w"
         abs_path = str(Path(normalized).resolve())
-        op_ceiling_msg, op_ceiling_break = self._check_file_op_ceiling(
-            abs_path=abs_path,
-            operation="write",
-        )
-        if op_ceiling_msg:
-            PrintStyle.warning(op_ceiling_msg)
-            return self.agent.read_prompt("fw.code.info.md", info=op_ceiling_msg), op_ceiling_break
-        if not append:
+        if bool(set.get("code_exec_guard_same_file_op_ceiling_enabled", False)):
+            op_ceiling_msg, op_ceiling_break = self._check_file_op_ceiling(
+                abs_path=abs_path,
+                operation="write",
+            )
+            if op_ceiling_msg:
+                PrintStyle.warning(op_ceiling_msg)
+                return self.agent.read_prompt("fw.code.info.md", info=op_ceiling_msg), op_ceiling_break
+        if not append and bool(set.get("code_exec_guard_strategy_block_enabled", False)):
             blocked_msg, blocked_break = self._check_blocked_strategy(
                 abs_path=abs_path, strategy="full_overwrite"
             )
@@ -672,11 +695,14 @@ class CodeExecution(Tool):
                 PrintStyle.warning(blocked_msg)
                 return self.agent.read_prompt("fw.code.info.md", info=blocked_msg), blocked_break
         guard_break = False
-        guard_msg = self._get_regressive_overwrite_guard(
-            abs_path=abs_path, content=content, append=append
-        )
+        guard_msg = None
+        if bool(set.get("code_exec_guard_regressive_overwrite_enabled", False)):
+            guard_msg = self._get_regressive_overwrite_guard(
+                abs_path=abs_path, content=content, append=append
+            )
         if guard_msg:
-            self._block_strategy(abs_path=abs_path, strategy="full_overwrite")
+            if bool(set.get("code_exec_guard_strategy_block_enabled", False)):
+                self._block_strategy(abs_path=abs_path, strategy="full_overwrite")
             PrintStyle.warning(guard_msg)
             guard_break = self._should_break_after_guard(abs_path)
             return self.agent.read_prompt("fw.code.info.md", info=guard_msg), guard_break
@@ -696,7 +722,7 @@ class CodeExecution(Tool):
             content = self._unescape_file_content(content)
             with target.open(mode, encoding="utf-8") as f:
                 f.write(content)
-            if not append:
+            if not append and bool(set.get("code_exec_guard_write_verify_enabled", False)):
                 expected_bytes = len(content.encode("utf-8"))
                 actual_bytes = target.stat().st_size
                 if actual_bytes != expected_bytes:
@@ -720,21 +746,24 @@ class CodeExecution(Tool):
             return self.agent.read_prompt("fw.code.info.md", info=info), False
 
     async def execute_file_read(self, path: str) -> tuple[str, bool]:
+        set = settings.get_settings()
         normalized = files.normalize_a0_path(path)
         abs_path = str(Path(normalized).resolve())
-        op_ceiling_msg, op_ceiling_break = self._check_file_op_ceiling(
-            abs_path=abs_path,
-            operation="read",
-        )
-        if op_ceiling_msg:
-            PrintStyle.warning(op_ceiling_msg)
-            return self.agent.read_prompt("fw.code.info.md", info=op_ceiling_msg), op_ceiling_break
-        blocked_msg, blocked_break = self._check_blocked_strategy(
-            abs_path=abs_path, strategy="same_path_read"
-        )
-        if blocked_msg:
-            PrintStyle.warning(blocked_msg)
-            return self.agent.read_prompt("fw.code.info.md", info=blocked_msg), blocked_break
+        if bool(set.get("code_exec_guard_same_file_op_ceiling_enabled", False)):
+            op_ceiling_msg, op_ceiling_break = self._check_file_op_ceiling(
+                abs_path=abs_path,
+                operation="read",
+            )
+            if op_ceiling_msg:
+                PrintStyle.warning(op_ceiling_msg)
+                return self.agent.read_prompt("fw.code.info.md", info=op_ceiling_msg), op_ceiling_break
+        if bool(set.get("code_exec_guard_strategy_block_enabled", False)):
+            blocked_msg, blocked_break = self._check_blocked_strategy(
+                abs_path=abs_path, strategy="same_path_read"
+            )
+            if blocked_msg:
+                PrintStyle.warning(blocked_msg)
+                return self.agent.read_prompt("fw.code.info.md", info=blocked_msg), blocked_break
         try:
             target = Path(normalized)
             if not target.exists():
@@ -747,13 +776,15 @@ class CodeExecution(Tool):
                 return self.agent.read_prompt("fw.code.info.md", info=info), False
 
             content = target.read_text(encoding="utf-8")
-            repetitive_msg, repetitive_break = self._check_repetitive_file_read(
-                abs_path=abs_path, content=content
-            )
-            if repetitive_msg:
-                self._block_strategy(abs_path=abs_path, strategy="same_path_read")
-                PrintStyle.warning(repetitive_msg)
-                return self.agent.read_prompt("fw.code.info.md", info=repetitive_msg), repetitive_break
+            if bool(set.get("code_exec_guard_repetitive_file_read_enabled", False)):
+                repetitive_msg, repetitive_break = self._check_repetitive_file_read(
+                    abs_path=abs_path, content=content
+                )
+                if repetitive_msg:
+                    if bool(set.get("code_exec_guard_strategy_block_enabled", False)):
+                        self._block_strategy(abs_path=abs_path, strategy="same_path_read")
+                    PrintStyle.warning(repetitive_msg)
+                    return self.agent.read_prompt("fw.code.info.md", info=repetitive_msg), repetitive_break
 
             info = (
                 f"Read file: {abs_path} ({len(content)} chars).\n\n"

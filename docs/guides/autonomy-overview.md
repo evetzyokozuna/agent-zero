@@ -15,7 +15,12 @@ The autonomy work introduces guardrails and budgets across the main failure-pron
 - History compression tuning controls (ratios + pass limits)
 - Runtime budgets (turn/task/subordinate caps)
 
-All settings are additive and default-safe. Existing behavior remains compatible unless settings are explicitly tightened.
+Guard switches are provided for staged adoption:
+
+- newly introduced guard switches default to backward-compatible `off` unless explicitly enabled
+- recommended production posture is to enable all guard switches
+
+This allows gradual rollout for existing deployments while still supporting strict defaults in profile examples.
 
 ## Where to tune
 
@@ -24,6 +29,10 @@ You can tune autonomy settings in three places:
 1. Settings UI: **Agent Settings -> Fine-Tuning**
 2. `.env` keys: `A0_SET_<setting_name>`
 3. Profile examples: `docs/setup/env-examples/`
+
+Guard-specific detail:
+
+- `autonomy-guards-reference.md` (what each guard does, risk when disabled)
 
 ## Fine-Tuning panel
 
@@ -82,5 +91,6 @@ From there:
 ## Next references
 
 - Full setting-by-setting reference: `autonomy-knobs-reference.md`
+- Guard-by-guard reference: `autonomy-guards-reference.md`
 - Validation and soak workflow: `autonomy-testing.md`
 - Ready-to-apply profile examples: `../setup/env-examples/`

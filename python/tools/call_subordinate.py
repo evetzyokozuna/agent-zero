@@ -12,11 +12,12 @@ class Delegation(Tool):
 
     async def execute(self, message="", reset="", **kwargs):
         set = settings.get_settings()
+        guards_enabled = bool(set.get("subordinate_guardrails_enabled", False))
         current_depth = self._get_current_depth()
         next_depth = current_depth + 1
 
         max_depth = int(set.get("subordinate_max_depth", 2))
-        if max_depth > 0 and next_depth > max_depth:
+        if guards_enabled and max_depth > 0 and next_depth > max_depth:
             warning = self.agent.read_prompt(
                 "fw.msg_subordinate_guardrail.md",
                 reason="maximum subordinate depth reached",
@@ -26,7 +27,7 @@ class Delegation(Tool):
 
         calls = int(self.agent.loop_data.params_persistent.get(self.DATA_NAME_SUB_CALLS, 0))
         max_calls = int(set.get("subordinate_max_calls_per_turn", 4))
-        if max_calls > 0 and calls >= max_calls:
+        if guards_enabled and max_calls > 0 and calls >= max_calls:
             warning = self.agent.read_prompt(
                 "fw.msg_subordinate_guardrail.md",
                 reason="maximum subordinate calls reached in this turn",
@@ -61,10 +62,13 @@ class Delegation(Tool):
         # run subordinate monologue
         max_runtime_seconds = int(set.get("subordinate_max_runtime_seconds", 300))
         runtime_budget_seconds = int(set.get("runtime_subordinate_budget_seconds", 0))
-        if max_runtime_seconds > 0 and runtime_budget_seconds > 0:
-            max_runtime_seconds = min(max_runtime_seconds, runtime_budget_seconds)
-        elif runtime_budget_seconds > 0:
-            max_runtime_seconds = runtime_budget_seconds
+        if guards_enabled:
+            if max_runtime_seconds > 0 and runtime_budget_seconds > 0:
+                max_runtime_seconds = min(max_runtime_seconds, runtime_budget_seconds)
+            elif runtime_budget_seconds > 0:
+                max_runtime_seconds = runtime_budget_seconds
+        else:
+            max_runtime_seconds = 0
         if max_runtime_seconds > 0:
             try:
                 result = await asyncio.wait_for(

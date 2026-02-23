@@ -98,6 +98,9 @@ class Settings(TypedDict):
     agent_max_runtime_seconds: int
     agent_max_consecutive_misformats: int
     agent_max_consecutive_repairable_errors: int
+    agent_guardrails_enabled: bool
+    agent_guard_context_hard_stop_enabled: bool
+    agent_guard_repeated_tool_action_enabled: bool
     tool_args_max_chars: int
     tool_args_spill_threshold_chars: int
     tool_args_spill_dir: str
@@ -113,6 +116,15 @@ class Settings(TypedDict):
     code_exec_max_input_chars: int
     code_exec_regressive_guard_retry_threshold: int
     code_exec_regressive_guard_retry_window_seconds: int
+    code_exec_guard_unterminated_heredoc_enabled: bool
+    code_exec_guard_unbalanced_shell_quote_enabled: bool
+    code_exec_guard_repetitive_terminal_read_enabled: bool
+    code_exec_guard_repetitive_file_read_enabled: bool
+    code_exec_guard_regressive_overwrite_enabled: bool
+    code_exec_guard_write_verify_enabled: bool
+    code_exec_guard_same_file_op_ceiling_enabled: bool
+    code_exec_guard_strategy_block_enabled: bool
+    code_exec_guard_simple_cat_direct_read_enabled: bool
     code_exec_same_file_read_ceiling: int
     code_exec_same_file_write_ceiling: int
     code_exec_file_op_window_seconds: int
@@ -122,6 +134,7 @@ class Settings(TypedDict):
     subordinate_max_depth: int
     subordinate_max_calls_per_turn: int
     subordinate_max_runtime_seconds: int
+    subordinate_guardrails_enabled: bool
     memory_load_limit_max: int
     memory_load_query_max_chars: int
     memory_load_response_max_chars: int
@@ -631,6 +644,10 @@ def get_default_settings() -> Settings:
         agent_max_runtime_seconds=get_default_value("agent_max_runtime_seconds", 900),
         agent_max_consecutive_misformats=get_default_value("agent_max_consecutive_misformats", 6),
         agent_max_consecutive_repairable_errors=get_default_value("agent_max_consecutive_repairable_errors", 6),
+        # Backward-compatible default keeps newly introduced guard switches off unless explicitly enabled.
+        agent_guardrails_enabled=get_default_value("agent_guardrails_enabled", False),
+        agent_guard_context_hard_stop_enabled=get_default_value("agent_guard_context_hard_stop_enabled", False),
+        agent_guard_repeated_tool_action_enabled=get_default_value("agent_guard_repeated_tool_action_enabled", False),
         tool_args_max_chars=get_default_value("tool_args_max_chars", 120000),
         tool_args_spill_threshold_chars=get_default_value("tool_args_spill_threshold_chars", 20000),
         tool_args_spill_dir=get_default_value("tool_args_spill_dir", "usr/tmp/tool_args"),
@@ -646,6 +663,15 @@ def get_default_settings() -> Settings:
         code_exec_max_input_chars=get_default_value("code_exec_max_input_chars", 60000),
         code_exec_regressive_guard_retry_threshold=get_default_value("code_exec_regressive_guard_retry_threshold", 3),
         code_exec_regressive_guard_retry_window_seconds=get_default_value("code_exec_regressive_guard_retry_window_seconds", 120),
+        code_exec_guard_unterminated_heredoc_enabled=get_default_value("code_exec_guard_unterminated_heredoc_enabled", False),
+        code_exec_guard_unbalanced_shell_quote_enabled=get_default_value("code_exec_guard_unbalanced_shell_quote_enabled", False),
+        code_exec_guard_repetitive_terminal_read_enabled=get_default_value("code_exec_guard_repetitive_terminal_read_enabled", False),
+        code_exec_guard_repetitive_file_read_enabled=get_default_value("code_exec_guard_repetitive_file_read_enabled", False),
+        code_exec_guard_regressive_overwrite_enabled=get_default_value("code_exec_guard_regressive_overwrite_enabled", False),
+        code_exec_guard_write_verify_enabled=get_default_value("code_exec_guard_write_verify_enabled", False),
+        code_exec_guard_same_file_op_ceiling_enabled=get_default_value("code_exec_guard_same_file_op_ceiling_enabled", False),
+        code_exec_guard_strategy_block_enabled=get_default_value("code_exec_guard_strategy_block_enabled", False),
+        code_exec_guard_simple_cat_direct_read_enabled=get_default_value("code_exec_guard_simple_cat_direct_read_enabled", False),
         code_exec_same_file_read_ceiling=get_default_value("code_exec_same_file_read_ceiling", 2),
         code_exec_same_file_write_ceiling=get_default_value("code_exec_same_file_write_ceiling", 2),
         code_exec_file_op_window_seconds=get_default_value("code_exec_file_op_window_seconds", 180),
@@ -655,6 +681,7 @@ def get_default_settings() -> Settings:
         subordinate_max_depth=get_default_value("subordinate_max_depth", 2),
         subordinate_max_calls_per_turn=get_default_value("subordinate_max_calls_per_turn", 4),
         subordinate_max_runtime_seconds=get_default_value("subordinate_max_runtime_seconds", 300),
+        subordinate_guardrails_enabled=get_default_value("subordinate_guardrails_enabled", False),
         memory_load_limit_max=get_default_value("memory_load_limit_max", 25),
         memory_load_query_max_chars=get_default_value("memory_load_query_max_chars", 12000),
         memory_load_response_max_chars=get_default_value("memory_load_response_max_chars", 24000),
