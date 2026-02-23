@@ -19,6 +19,32 @@ const model = {
   _pendingAddOps: {},
 
   _lastAddToQueuePromise: Promise.resolve(),
+  _epoch: 0,
+
+  bumpEpoch() {
+    this._epoch = (Number(this._epoch) || 0) + 1;
+    this._cancelPendingAddOps();
+    return this._epoch;
+  },
+
+  _cancelPendingAddOps() {
+    const pending = this._pendingAddOps || {};
+    for (const op of Object.values(pending)) {
+      if (!op) continue;
+      op.canceled = true;
+      if (op.controller) {
+        try {
+          op.controller.abort();
+        } catch (_e) {
+          // no-op
+        }
+      }
+    }
+    this._pendingAddOps = {};
+    this.pendingItems = [];
+    // Break the sequencing chain so stale operations cannot enqueue later.
+    this._lastAddToQueuePromise = Promise.resolve();
+  },
 
   _getQueueScrollerEl() {
     return document.querySelector(".queue-preview .queue-items");
@@ -54,6 +80,7 @@ const model = {
   async addToQueue(text, attachments = []) {
     const context = globalThis.getContext?.();
     if (!context) return false;
+    const opEpoch = Number(this._epoch) || 0;
 
     // Generate a temporary ID for pending item
     const tempId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -79,6 +106,9 @@ const model = {
     this.scrollQueueToBottom();
 
     const run = async () => {
+      if ((Number(this._epoch) || 0) !== opEpoch) {
+        return false;
+      }
       const op = this._pendingAddOps?.[tempId];
       if (!op || op.canceled) {
         this._pendingAddOps = { ...this._pendingAddOps };
@@ -120,6 +150,9 @@ const model = {
         });
 
         if (!resp || !resp.ok) {
+          return false;
+        }
+        if ((Number(this._epoch) || 0) !== opEpoch) {
           return false;
         }
 
@@ -171,7 +204,11 @@ const model = {
     }
   },
 
-  async clearQueue() {
+  async clearQueue(options = {}) {
+    const hard = Boolean(options?.hard);
+    if (hard) {
+      this._cancelPendingAddOps();
+    }
     const context = globalThis.getContext?.();
     if (!context) return;
     try {

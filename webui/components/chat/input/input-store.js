@@ -9,6 +9,8 @@ import { store as chatsStore } from "/components/sidebar/chats/chats-store.js";
 const model = {
   paused: false,
   stopping: false,
+  pendingFreshStart: false,
+  stopEpoch: 0,
   message: "",
 
   _getSendState() {
@@ -58,6 +60,27 @@ const model = {
 
   async sendMessage() {
     if (this.stopping) return;
+    // After an explicit stop, request a fresh backend epoch before sending.
+    if (this.pendingFreshStart) {
+      try {
+        const context = globalThis.getContext?.();
+        if (globalThis.sendJsonData && context) {
+          await globalThis.sendJsonData("/pause", {
+            paused: false,
+            context,
+            ctxid: context,
+            fresh_start: true,
+            reset_monologue: true,
+            stop_epoch: this.stopEpoch,
+          });
+        }
+      } catch (_e) {
+        // best effort; continue with send path
+      } finally {
+        this.paused = false;
+        this.pendingFreshStart = false;
+      }
+    }
     // Delegate to the global function
     if (globalThis.sendMessage) {
       await globalThis.sendMessage();
@@ -100,6 +123,8 @@ const model = {
     const prevPaused = this.paused;
     this.stopping = true;
     this.paused = true;
+    this.stopEpoch = (Number(this.stopEpoch) || 0) + 1;
+    this.pendingFreshStart = true;
 
     const context = globalThis.getContext?.();
     const send = globalThis.sendJsonData;
@@ -135,10 +160,19 @@ const model = {
       // Clear any queued local draft state so no new work gets enqueued.
       if (messageQueueStore?.clearQueue) {
         try {
-          messageQueueStore.clearQueue();
+          if (messageQueueStore?.bumpEpoch) {
+            messageQueueStore.bumpEpoch();
+          }
+          await messageQueueStore.clearQueue({ hard: true });
         } catch (_e) {
           // no-op; queue API varies across builds
         }
+      }
+
+      // Ensure UI no longer treats chat as running after explicit stop.
+      if (chatsStore?.selectedContext) {
+        chatsStore.selectedContext.running = false;
+        chatsStore.selectedContext.message_queue = [];
       }
       this.message = "";
       this.adjustTextareaHeight();
