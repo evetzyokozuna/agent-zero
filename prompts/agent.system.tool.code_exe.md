@@ -18,6 +18,12 @@ important: if chunking is required, first chunk must be append=false and all rem
 important: after a write, verify using runtime "terminal" (wc -c and optional marker grep) and report byte count before making more write calls
 important: if verification fails or output indicates partial content, regenerate missing content and repair with append=true; avoid repeated full rewrites
 important: do not switch back to terminal heredoc for markdown/text file writes once runtime "file" is available
+important: never pass directory-like or truncated paths to runtime "file" (examples to avoid: "/", "/a", "/tmp/"); pass the full file path every time
+important: never send empty content with append=false unless you explicitly intend to clear a file and include `allow_empty=true`
+important: for runtime "terminal", ensure quotes are balanced; malformed quoting will be rejected to avoid shell waiting mode
+important: if you receive guard tags like [WRITE_GUARD:REGRESSIVE_OVERWRITE] or [WRITE_GUARD:RECOVERY_MODE], stop full overwrite attempts immediately
+important: on guard rejection, run terminal verification (`wc -c`, optional `sha256sum`) and then repair incrementally with append=true or targeted patch only
+important: do not issue more than one append=false rewrite attempt per file in a turn; if blocked, switch strategy instead of retrying
 don't use with other tools except thoughts; wait for response before using others
 check dependencies before running code
 output may end with [SYSTEM: ...] information comming from framework, not terminal

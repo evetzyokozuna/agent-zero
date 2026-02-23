@@ -64,6 +64,11 @@ This prevents common infinite retry loops caused by truncated heredoc tool paylo
 
 This helps surface truncation/malformed payload issues early instead of failing deep in runtime execution.
 
+For regressive overwrite loop handling, these knobs tune abort behavior:
+
+- `A0_SET_code_exec_regressive_guard_retry_threshold`
+- `A0_SET_code_exec_regressive_guard_retry_window_seconds`
+
 ## Operational defaults
 
 A practical starting point is the balanced profile in `docs/setup/env-examples/profile_balanced_production.env`.

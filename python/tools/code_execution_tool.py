@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import shlex
 import time
 import os
+import hashlib
 from pathlib import Path
 from python.helpers.tool import Tool, Response
 from python.helpers import files, rfc_exchange, projects, runtime, settings
@@ -114,11 +115,28 @@ class CodeExecution(Tool):
             path = self._coerce_code_arg(exec_args.get("path")).strip()
             content = self._coerce_code_arg(exec_args.get("content"))
             append = bool(exec_args.get("append", False))
+            allow_empty = bool(exec_args.get("allow_empty", False))
 
             if not path:
                 info = (
                     "File write request ignored because `path` is empty. "
                     "Regenerate the tool call with a valid path."
+                )
+                PrintStyle.warning(info)
+                response = self.agent.read_prompt("fw.code.info.md", info=info)
+                return Response(message=response, break_loop=False)
+
+            invalid_path_reason = self._validate_file_path(path)
+            if invalid_path_reason:
+                PrintStyle.warning(invalid_path_reason)
+                response = self.agent.read_prompt("fw.code.info.md", info=invalid_path_reason)
+                return Response(message=response, break_loop=False)
+
+            if not allow_empty and not content:
+                info = (
+                    "File write request ignored because `content` is empty. "
+                    "This prevents accidental truncation to zero bytes. "
+                    "Regenerate with full content, or set `allow_empty=true` for an intentional clear."
                 )
                 PrintStyle.warning(info)
                 response = self.agent.read_prompt("fw.code.info.md", info=info)
@@ -134,8 +152,10 @@ class CodeExecution(Tool):
                 response = self.agent.read_prompt("fw.code.info.md", info=info)
                 return Response(message=response, break_loop=False)
 
-            response = await self.execute_file_write(path=path, content=content, append=append)
-            return Response(message=response, break_loop=False)
+            response, break_loop = await self.execute_file_write(
+                path=path, content=content, append=append
+            )
+            return Response(message=response, break_loop=break_loop)
 
         if runtime == "python":
             response = await self.execute_python_code(
@@ -286,6 +306,16 @@ class CodeExecution(Tool):
                 f"(missing closing marker `{unterminated_marker}` on its own line). "
                 "The command appears truncated and was not executed. "
                 "Retry with smaller chunks, or use python runtime to write file content safely."
+            )
+            PrintStyle.warning(info)
+            return self.agent.read_prompt("fw.code.info.md", info=info)
+        quote_error = self._find_unbalanced_shell_quote_error(command)
+        if quote_error:
+            info = (
+                "Detected malformed shell quoting in terminal command; "
+                "the command appears truncated and was not executed. "
+                f"Details: {quote_error}. "
+                "Regenerate the command with balanced quotes."
             )
             PrintStyle.warning(info)
             return self.agent.read_prompt("fw.code.info.md", info=info)
@@ -609,29 +639,213 @@ class CodeExecution(Tool):
             output += self._output_dump_marker
         return output
 
-    async def execute_file_write(self, path: str, content: str, append: bool = False):
+    async def execute_file_write(
+        self, path: str, content: str, append: bool = False
+    ) -> tuple[str, bool]:
         normalized = files.normalize_a0_path(path)
         mode = "a" if append else "w"
         abs_path = str(Path(normalized).resolve())
+        guard_break = False
+        guard_msg = self._get_regressive_overwrite_guard(
+            abs_path=abs_path, content=content, append=append
+        )
+        if guard_msg:
+            PrintStyle.warning(guard_msg)
+            guard_break = self._should_break_after_guard(abs_path)
+            return self.agent.read_prompt("fw.code.info.md", info=guard_msg), guard_break
 
         try:
             target = Path(normalized)
+            if target.exists() and target.is_dir():
+                info = (
+                    f"File write rejected: target path is a directory ({abs_path}). "
+                    "Regenerate the tool call with a concrete file path."
+                )
+                PrintStyle.warning(info)
+                return self.agent.read_prompt("fw.code.info.md", info=info), False
             target.parent.mkdir(parents=True, exist_ok=True)
             with target.open(mode, encoding="utf-8") as f:
                 f.write(content)
+            if not append:
+                expected_bytes = len(content.encode("utf-8"))
+                actual_bytes = target.stat().st_size
+                if actual_bytes != expected_bytes:
+                    info = (
+                        "[WRITE_GUARD:VERIFY_FAILED] "
+                        f"File write verification failed for {abs_path}: "
+                        f"expected {expected_bytes} bytes, got {actual_bytes} bytes. "
+                        "Do not retry full overwrite blindly; read current file and repair only missing sections."
+                    )
+                    PrintStyle.warning(info)
+                    self._mark_recovery_required(abs_path)
+                    return self.agent.read_prompt("fw.code.info.md", info=info), False
             op = "Appended to" if append else "Wrote"
             info = f"{op} file: {abs_path} ({len(content)} chars)."
             PrintStyle.info(info)
-            return self.agent.read_prompt("fw.code.info.md", info=info)
+            self._record_file_write_success(abs_path=abs_path, content=content, append=append)
+            return self.agent.read_prompt("fw.code.info.md", info=info), False
         except Exception as e:
             info = f"File write failed for {abs_path}: {e}"
             PrintStyle.error(info)
-            return self.agent.read_prompt("fw.code.info.md", info=info)
+            return self.agent.read_prompt("fw.code.info.md", info=info), False
 
     def _coerce_code_arg(self, value: object) -> str:
         if value is None:
             return ""
         return str(value)
+
+    def _validate_file_path(self, path: str) -> str | None:
+        candidate = path.strip()
+        normalized = files.normalize_a0_path(candidate)
+        target = Path(normalized)
+
+        if candidate in {"/", ".", ".."}:
+            return (
+                "File write request ignored because `path` points to a directory/root "
+                f"({candidate!r}). Regenerate with a concrete file path."
+            )
+
+        if candidate.endswith("/") or target.name in {"", ".", ".."}:
+            return (
+                "File write request ignored because `path` looks like a directory, not a file. "
+                f"Provided path: {candidate!r}."
+            )
+
+        # Guard against common truncation artifacts such as '/a' or '/x'.
+        if target.is_absolute() and len(target.parts) <= 2:
+            return (
+                "File write request ignored because `path` looks truncated/unsafe "
+                f"({candidate!r}). Regenerate with the full absolute file path."
+            )
+
+        return None
+
+    def _get_regressive_overwrite_guard(
+        self, abs_path: str, content: str, append: bool
+    ) -> str | None:
+        if append:
+            return None
+        meta: dict = self.agent.get_data("_cet_file_write_meta") or {}
+        prev = meta.get(abs_path)
+        if not prev:
+            return None
+
+        prev_len = int(prev.get("chars", 0))
+        prev_sha = str(prev.get("sha256", ""))
+        prev_at = float(prev.get("ts", 0))
+        new_len = len(content)
+        new_sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        age_seconds = int(max(0, time.time() - prev_at))
+
+        # Idempotent rewrite of same payload is safe.
+        if new_sha == prev_sha:
+            return None
+
+        # Once in recovery mode, force repair flow instead of repeated full overwrite.
+        if prev.get("recovery_required"):
+            self._mark_recovery_required(abs_path)
+            snapshot_hint = str(prev.get("snapshot_path", ""))
+            snapshot_text = (
+                f" Last stable snapshot: {snapshot_hint}."
+                if snapshot_hint
+                else ""
+            )
+            return (
+                "[WRITE_GUARD:RECOVERY_MODE] "
+                f"Full overwrite blocked for {abs_path} while recovery mode is active. "
+                "Read current file and repair incrementally (append=true or targeted patch)."
+                + snapshot_text
+            )
+
+        # Guard against degradation loops where repeated full rewrites get smaller.
+        if age_seconds <= 1800 and prev_len >= 500:
+            if new_len <= int(prev_len * 0.85) and (prev_len - new_len) >= 200:
+                self._mark_recovery_required(abs_path)
+                snapshot_hint = str(prev.get("snapshot_path", ""))
+                snapshot_text = (
+                    f" Last stable snapshot: {snapshot_hint}."
+                    if snapshot_hint
+                    else ""
+                )
+                return (
+                    "[WRITE_GUARD:REGRESSIVE_OVERWRITE] "
+                    "Rejected likely regressive full overwrite for "
+                    f"{abs_path}: previous successful write was {prev_len} chars "
+                    f"{age_seconds}s ago, new payload is {new_len} chars. "
+                    "Read current file and repair missing sections; avoid repeated append=false full rewrites."
+                    + snapshot_text
+                )
+        return None
+
+    def _record_file_write_success(self, abs_path: str, content: str, append: bool):
+        meta: dict = self.agent.get_data("_cet_file_write_meta") or {}
+        snapshot_path = self._write_snapshot(abs_path=abs_path, content=content)
+        prev = meta.get(abs_path) or {}
+        meta[abs_path] = {
+            "chars": len(content),
+            "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            "ts": time.time(),
+            "snapshot_path": snapshot_path,
+            "recovery_required": False if append else bool(prev.get("recovery_required", False)),
+            "guard_reject_count": 0 if not append else int(prev.get("guard_reject_count", 0)),
+        }
+        if append:
+            # Successful append is part of recovery flow; keep full-overwrite guard state.
+            meta[abs_path]["recovery_required"] = bool(prev.get("recovery_required", False))
+        else:
+            # Successful full write clears recovery mode.
+            meta[abs_path]["recovery_required"] = False
+            meta[abs_path]["guard_reject_count"] = 0
+        self.agent.set_data("_cet_file_write_meta", meta)
+
+    def _mark_recovery_required(self, abs_path: str):
+        meta: dict = self.agent.get_data("_cet_file_write_meta") or {}
+        prev = meta.get(abs_path) or {}
+        now = time.time()
+        set = settings.get_settings()
+        retry_window_seconds = int(
+            set.get("code_exec_regressive_guard_retry_window_seconds", 120)
+        )
+        if retry_window_seconds < 1:
+            retry_window_seconds = 1
+        last_reject = float(prev.get("last_reject_ts", 0) or 0)
+        # Treat stale retries as a new turn window.
+        if last_reject and (now - last_reject) > retry_window_seconds:
+            count = 1
+        else:
+            count = int(prev.get("guard_reject_count", 0)) + 1
+        prev["guard_reject_count"] = count
+        prev["recovery_required"] = True
+        prev["last_reject_ts"] = now
+        meta[abs_path] = prev
+        self.agent.set_data("_cet_file_write_meta", meta)
+
+    def _should_break_after_guard(self, abs_path: str) -> bool:
+        meta: dict = self.agent.get_data("_cet_file_write_meta") or {}
+        prev = meta.get(abs_path) or {}
+        count = int(prev.get("guard_reject_count", 0))
+        set = settings.get_settings()
+        retry_threshold = int(
+            set.get("code_exec_regressive_guard_retry_threshold", 3)
+        )
+        if retry_threshold < 1:
+            retry_threshold = 1
+        # Stop the current loop after repeated guarded failures on the same file.
+        if count >= retry_threshold:
+            PrintStyle.warning(
+                "[WRITE_GUARD:TURN_ABORT] Too many guarded overwrite retries; breaking loop for user intervention."
+            )
+            return True
+        return False
+
+    def _write_snapshot(self, abs_path: str, content: str) -> str:
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+        name = Path(abs_path).name or "file"
+        snap_dir = Path("/a0/usr/tmp/code_exec_snapshots")
+        snap_dir.mkdir(parents=True, exist_ok=True)
+        snap_file = snap_dir / f"{name}.{digest}.txt"
+        snap_file.write_text(content, encoding="utf-8")
+        return str(snap_file)
 
     def _python_preflight_syntax_error(self, code: str) -> str | None:
         try:
@@ -709,6 +923,17 @@ class CodeExecution(Tool):
             if not closed:
                 return marker
         return None
+
+    def _find_unbalanced_shell_quote_error(self, command: str) -> str | None:
+        # Catch common truncated command cases that leave shell waiting for input.
+        try:
+            shlex.split(command, posix=True)
+            return None
+        except ValueError as e:
+            msg = str(e)
+            if "No closing quotation" in msg:
+                return msg
+            return None
 
     def _get_timeouts(self, output_runtime: bool = False) -> dict[str, int]:
         defaults = OUTPUT_TIMEOUTS if output_runtime else CODE_EXEC_TIMEOUTS

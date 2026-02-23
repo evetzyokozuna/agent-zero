@@ -1,5 +1,6 @@
 import { createStore } from "/js/AlpineStore.js";
 import * as shortcuts from "/js/shortcuts.js";
+import { websocket } from "/js/websocket.js";
 import { store as fileBrowserStore } from "/components/modals/file-browser/file-browser-store.js";
 import { store as messageQueueStore } from "/components/chat/message-queue/message-queue-store.js";
 import { store as attachmentsStore } from "/components/chat/attachments/attachmentsStore.js";
@@ -7,6 +8,7 @@ import { store as chatsStore } from "/components/sidebar/chats/chats-store.js";
 
 const model = {
   paused: false,
+  stopping: false,
   message: "",
 
   _getSendState() {
@@ -55,6 +57,7 @@ const model = {
   },
 
   async sendMessage() {
+    if (this.stopping) return;
     // Delegate to the global function
     if (globalThis.sendMessage) {
       await globalThis.sendMessage();
@@ -77,11 +80,75 @@ const model = {
       if (!globalThis.sendJsonData)
         throw new Error("sendJsonData not available");
       await globalThis.sendJsonData("/pause", { paused, context });
+      if (!paused) {
+        try {
+          await websocket.connect();
+        } catch (_e) {
+          // no-op
+        }
+      }
     } catch (e) {
       this.paused = prev;
       if (globalThis.toastFetchError) {
         globalThis.toastFetchError("Error pausing agent", e);
       }
+    }
+  },
+
+  async stopAgent() {
+    if (this.stopping) return;
+    const prevPaused = this.paused;
+    this.stopping = true;
+    this.paused = true;
+
+    const context = globalThis.getContext?.();
+    const send = globalThis.sendJsonData;
+    try {
+      if (!send) throw new Error("sendJsonData not available");
+
+      // Try explicit stop-like endpoints in order; backend capability differs by build.
+      const payload = { context, ctxid: context, hard: true, stop: true };
+      const stopEndpoints = ["/stop", "/interrupt", "/break", "/pause"];
+      let stopped = false;
+      for (const endpoint of stopEndpoints) {
+        try {
+          const body =
+            endpoint === "/pause" ? { ...payload, paused: true } : payload;
+          await send(endpoint, body);
+          stopped = true;
+          break;
+        } catch (_e) {
+          // try next endpoint
+        }
+      }
+      if (!stopped) {
+        throw new Error("No stop endpoint accepted request");
+      }
+
+      // Cut websocket stream immediately so current UI stops receiving loop updates.
+      try {
+        await websocket.disconnect();
+      } catch (_e) {
+        // no-op
+      }
+
+      // Clear any queued local draft state so no new work gets enqueued.
+      if (messageQueueStore?.clearQueue) {
+        try {
+          messageQueueStore.clearQueue();
+        } catch (_e) {
+          // no-op; queue API varies across builds
+        }
+      }
+      this.message = "";
+      this.adjustTextareaHeight();
+    } catch (e) {
+      this.paused = prevPaused;
+      if (globalThis.toastFetchError) {
+        globalThis.toastFetchError("Error stopping agent", e);
+      }
+    } finally {
+      this.stopping = false;
     }
   },
 

@@ -25,6 +25,13 @@
             <span x-text="$store.chatInput.paused ? 'Resume Agent' : 'Pause Agent'"></span>
         </button>
 
+        <button class="text-button stop-button"
+                @click="$confirmClick($event, () => $store.chatInput.stopAgent())"
+                :disabled="$store.chatInput.stopping">
+            <span class="material-symbols-outlined">stop_circle</span>
+            <span x-text="$store.chatInput.stopping ? 'Stopping…' : 'Stop Agent'"></span>
+        </button>
+
         <button class="text-button" @click="$confirmClick($event, () => $store.chats.resetChat())" :disabled="!$store.chats.selected">
             <span class="material-symbols-outlined">delete_sweep</span>
             <p>Clear Chat</p>
@@ -86,6 +93,8 @@
         .text-button svg { width: 14px; height: 14px; flex-shrink: 0; }
         .text-button .material-symbols-outlined { font-size: 14px; flex-shrink: 0; }
         .text-button p { margin-block: 0; }
+        .stop-button { color: #ff7070; }
+        .stop-button:hover:not(:disabled) { background-color: rgba(255, 80, 80, 0.12); }
 
         @media (max-width: 768px) { .text-buttons-row { width: 90%; display: flex; padding-top: var(--spacing-xs); gap: var(--spacing-xs); white-space: pre-wrap; } .text-button { font-size: 0.6rem; } .text-button svg { width: 18px; height: 18px; flex-shrink: 0; } .text-button .material-symbols-outlined { font-size: 18px; } }
         @media (max-width: 640px) { .text-buttons-row { display: flex; width: 90%; padding-top: var(--spacing-xs); gap: var(--spacing-xs); white-space: pre-wrap; } .text-button { max-height: 25px; } .text-button p { display: none; } }

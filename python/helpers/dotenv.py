@@ -9,17 +9,35 @@ KEY_AUTH_LOGIN = "AUTH_LOGIN"
 KEY_AUTH_PASSWORD = "AUTH_PASSWORD"
 KEY_RFC_PASSWORD = "RFC_PASSWORD"
 KEY_ROOT_PASSWORD = "ROOT_PASSWORD"
+_last_loaded_mtime: float | None = None
 
 def load_dotenv():
-    _load_dotenv(get_dotenv_file_path(), override=True)
+    global _last_loaded_mtime
+    dotenv_path = get_dotenv_file_path()
+    _load_dotenv(dotenv_path, override=True)
+    try:
+        _last_loaded_mtime = os.path.getmtime(dotenv_path)
+    except OSError:
+        _last_loaded_mtime = None
 
 
 def get_dotenv_file_path():
     return get_abs_path("usr/.env")
 
 def get_dotenv_value(key: str, default: Any = None):
-    # load_dotenv()       
+    _refresh_dotenv_if_changed()
     return os.getenv(key, default)
+
+
+def _refresh_dotenv_if_changed():
+    global _last_loaded_mtime
+    dotenv_path = get_dotenv_file_path()
+    try:
+        current_mtime = os.path.getmtime(dotenv_path)
+    except OSError:
+        return
+    if _last_loaded_mtime is None or current_mtime > _last_loaded_mtime:
+        load_dotenv()
 
 def save_dotenv_value(key: str, value: str):
     if value is None:

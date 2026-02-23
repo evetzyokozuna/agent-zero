@@ -111,6 +111,8 @@ class Settings(TypedDict):
     code_exec_dump_dir: str
     code_exec_prefer_python_file_write: bool
     code_exec_max_input_chars: int
+    code_exec_regressive_guard_retry_threshold: int
+    code_exec_regressive_guard_retry_window_seconds: int
     subordinate_max_depth: int
     subordinate_max_calls_per_turn: int
     subordinate_max_runtime_seconds: int
@@ -395,7 +397,12 @@ def get_settings() -> Settings:
         _settings = _read_settings_file()
     if not _settings:
         _settings = get_default_settings()
-    norm = normalize_settings(_settings)
+    # Keep process env in sync with usr/.env and apply A0_SET_* overrides at read time.
+    # This lets settings changed on disk take effect without requiring a container restart.
+    current = _apply_env_overrides(_settings)
+    norm = normalize_settings(current)
+    # Keep in-memory cache aligned with env-overridden values for subsequent callers.
+    _settings = norm
     _load_sensitive_settings(norm)
     return norm
 
@@ -462,6 +469,15 @@ def normalize_settings(settings: Settings) -> Settings:
     # mcp server token is set automatically
     copy["mcp_server_token"] = create_auth_token()
 
+    return copy
+
+
+def _apply_env_overrides(settings: Settings) -> Settings:
+    copy = settings.copy()
+    default = get_default_settings()
+    for key, fallback in default.items():
+        current = copy.get(key, fallback)
+        copy[key] = get_default_value(key, current)
     return copy
 
 
@@ -622,6 +638,8 @@ def get_default_settings() -> Settings:
         code_exec_dump_dir=get_default_value("code_exec_dump_dir", "usr/tmp/code_exec"),
         code_exec_prefer_python_file_write=get_default_value("code_exec_prefer_python_file_write", False),
         code_exec_max_input_chars=get_default_value("code_exec_max_input_chars", 60000),
+        code_exec_regressive_guard_retry_threshold=get_default_value("code_exec_regressive_guard_retry_threshold", 3),
+        code_exec_regressive_guard_retry_window_seconds=get_default_value("code_exec_regressive_guard_retry_window_seconds", 120),
         subordinate_max_depth=get_default_value("subordinate_max_depth", 2),
         subordinate_max_calls_per_turn=get_default_value("subordinate_max_calls_per_turn", 4),
         subordinate_max_runtime_seconds=get_default_value("subordinate_max_runtime_seconds", 300),

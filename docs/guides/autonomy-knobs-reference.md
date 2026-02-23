@@ -64,6 +64,10 @@ Notes:
   - When true, terminal heredoc file writes are blocked or converted to Python file write paths.
 - `code_exec_max_input_chars`
   - Maximum allowed input size for `code_execution_tool` `code` payloads before early rejection.
+- `code_exec_regressive_guard_retry_threshold`
+  - Number of guarded full-overwrite retries allowed before forcing a loop break.
+- `code_exec_regressive_guard_retry_window_seconds`
+  - Sliding window used to reset guarded retry count after inactivity.
 
 ---
 
