@@ -19,9 +19,9 @@ This skill defines the exact structure, format, and rules for all health logs.
 
 ## Macro Determination
 
-- If supplied with photo of food, perform best estimation; if the food item is given a name by user, record the estimation in MacrosAndRecipes.md by that name
-- If that name is already recorded, ask if it should be updated or if the recorded item should be used
-- When supplied with a reference to a specific intake item, check MacrosAndRecipes.md for previous record of item
+- **Generic whole foods** (ground beef, eggs, chicken breast, rice, etc.): Use your knowledge to estimate macros per 100g or typical serving. Add to the log directly. Do not require MacrosAndRecipes. If the user corrects your estimate, store the correction in memory for future use.
+- **Named products/recipes** (brand names, specific recipes): Check MacrosAndRecipes.md first via health_log_macro_lookup. If not found and user provides macros, use health_log_macro_record to add. If that name is already recorded, ask if it should be updated or if the recorded item should be used.
+- If supplied with photo of food, perform best estimation; if the food item is given a name by user, record the estimation in MacrosAndRecipes.md by that name.
 - When looking up an item in MacrosAndRecipes.md and it's a fuzzy match or multiple items might fit, present a multiple choice "Did you mean?" An option should be "Record new item"
 
 ## Core Rules (12 Sections)

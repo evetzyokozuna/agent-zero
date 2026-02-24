@@ -26,7 +26,7 @@ Read Supplements.md, format as section 08 (Day Pack / Night Pack / Other). Retur
 ~~~
 
 ### health_log_macro_lookup
-Look up item in MacrosAndRecipes.md. Returns kcal | P C F or "Did you mean?" list. Never invent macros.
+Look up item in MacrosAndRecipes.md. Use for **named products/recipes** (brand names, specific recipes). Returns kcal | P C F or "Did you mean?" list. If no match, the tool will suggest: for generic whole foods use your knowledge to estimate; for named items use health_log_macro_record.
 ~~~json
 {
     "tool_name": "health_log_macro_lookup",
@@ -37,6 +37,27 @@ Look up item in MacrosAndRecipes.md. Returns kcal | P C F or "Did you mean?" lis
     }
 }
 ~~~
+
+### health_log_macro_record
+Record a new named product/recipe to MacrosAndRecipes.md. Use when user provides macros for a specific product or recipe (not for generic whole foods — those you estimate from knowledge).
+~~~json
+{
+    "tool_name": "health_log_macro_record",
+    "tool_args": {
+        "workdir": "",
+        "item_name": "Brand X Protein Bar",
+        "kcal": "200",
+        "protein": "20",
+        "carbs": "22",
+        "fat": "6",
+        "serving_size": "60g"
+    }
+}
+~~~
+
+### Macro handling: generic vs named
+- **Generic whole foods** (ground beef, eggs, chicken breast, rice, etc.): Use your knowledge to estimate macros per 100g or typical serving. Add to the log via health_log_section_write. Do not block on MacrosAndRecipes. If user corrects your estimate, store the correction in memory for future use.
+- **Named products/recipes** (brand names, user's recipes): Use health_log_macro_lookup first. If not found and user provides macros, use health_log_macro_record.
 
 ### health_log_energy_delta
 Parse archives + Today.md, compute Today's Delta, 7-Day Avg/Delta, 14-Day Avg/Delta. Returns formatted section 05.

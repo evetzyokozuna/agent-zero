@@ -90,6 +90,6 @@ class HealthLogMacroLookup(Tool):
 
         # No match
         return Response(
-            message=f"No match for '{item_name}'. Record new item in MacrosAndRecipes.md.",
+            message=f"No match for '{item_name}' in MacrosAndRecipes. For generic whole foods (e.g. ground beef, eggs, chicken breast), use your knowledge to estimate macros per 100g or typical serving and add to the log. For named products/recipes, use health_log_macro_record to add.",
             break_loop=False,
         )
