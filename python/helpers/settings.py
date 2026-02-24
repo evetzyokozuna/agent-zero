@@ -101,6 +101,15 @@ class Settings(TypedDict):
     agent_guardrails_enabled: bool
     agent_guard_context_hard_stop_enabled: bool
     agent_guard_repeated_tool_action_enabled: bool
+    agent_retry_split_by_error_class_enabled: bool
+    agent_transient_error_max_retries: int
+    agent_transient_error_retry_delay_seconds: int
+    agent_critical_error_max_retries: int
+    agent_critical_error_retry_delay_seconds: int
+    agent_degradation_auto_abort_enabled: bool
+    agent_tool_call_ceiling_per_turn: int
+    agent_guardrail_hits_ceiling_per_minute: int
+    agent_missing_context_errors_ceiling_per_turn: int
     tool_args_max_chars: int
     tool_args_spill_threshold_chars: int
     tool_args_spill_dir: str
@@ -125,6 +134,11 @@ class Settings(TypedDict):
     code_exec_guard_same_file_op_ceiling_enabled: bool
     code_exec_guard_strategy_block_enabled: bool
     code_exec_guard_simple_cat_direct_read_enabled: bool
+    code_exec_tool_preflight_enabled: bool
+    code_exec_deterministic_critical_mode_enabled: bool
+    code_exec_deterministic_critical_patterns: str
+    code_exec_deterministic_critical_window_seconds: int
+    code_exec_deterministic_critical_break_after_write: bool
     code_exec_same_file_read_ceiling: int
     code_exec_same_file_write_ceiling: int
     code_exec_file_op_window_seconds: int
@@ -704,6 +718,15 @@ def get_default_settings() -> Settings:
         agent_guardrails_enabled=get_default_value("agent_guardrails_enabled", False),
         agent_guard_context_hard_stop_enabled=get_default_value("agent_guard_context_hard_stop_enabled", False),
         agent_guard_repeated_tool_action_enabled=get_default_value("agent_guard_repeated_tool_action_enabled", False),
+        agent_retry_split_by_error_class_enabled=get_default_value("agent_retry_split_by_error_class_enabled", False),
+        agent_transient_error_max_retries=get_default_value("agent_transient_error_max_retries", 2),
+        agent_transient_error_retry_delay_seconds=get_default_value("agent_transient_error_retry_delay_seconds", 2),
+        agent_critical_error_max_retries=get_default_value("agent_critical_error_max_retries", 1),
+        agent_critical_error_retry_delay_seconds=get_default_value("agent_critical_error_retry_delay_seconds", 3),
+        agent_degradation_auto_abort_enabled=get_default_value("agent_degradation_auto_abort_enabled", False),
+        agent_tool_call_ceiling_per_turn=get_default_value("agent_tool_call_ceiling_per_turn", 30),
+        agent_guardrail_hits_ceiling_per_minute=get_default_value("agent_guardrail_hits_ceiling_per_minute", 8),
+        agent_missing_context_errors_ceiling_per_turn=get_default_value("agent_missing_context_errors_ceiling_per_turn", 1),
         tool_args_max_chars=get_default_value("tool_args_max_chars", 120000),
         tool_args_spill_threshold_chars=get_default_value("tool_args_spill_threshold_chars", 20000),
         tool_args_spill_dir=get_default_value("tool_args_spill_dir", "usr/tmp/tool_args"),
@@ -728,6 +751,11 @@ def get_default_settings() -> Settings:
         code_exec_guard_same_file_op_ceiling_enabled=get_default_value("code_exec_guard_same_file_op_ceiling_enabled", False),
         code_exec_guard_strategy_block_enabled=get_default_value("code_exec_guard_strategy_block_enabled", False),
         code_exec_guard_simple_cat_direct_read_enabled=get_default_value("code_exec_guard_simple_cat_direct_read_enabled", False),
+        code_exec_tool_preflight_enabled=get_default_value("code_exec_tool_preflight_enabled", False),
+        code_exec_deterministic_critical_mode_enabled=get_default_value("code_exec_deterministic_critical_mode_enabled", False),
+        code_exec_deterministic_critical_patterns=get_default_value("code_exec_deterministic_critical_patterns", "Today.md,*/Today.md"),
+        code_exec_deterministic_critical_window_seconds=get_default_value("code_exec_deterministic_critical_window_seconds", 900),
+        code_exec_deterministic_critical_break_after_write=get_default_value("code_exec_deterministic_critical_break_after_write", True),
         code_exec_same_file_read_ceiling=get_default_value("code_exec_same_file_read_ceiling", 2),
         code_exec_same_file_write_ceiling=get_default_value("code_exec_same_file_write_ceiling", 2),
         code_exec_file_op_window_seconds=get_default_value("code_exec_file_op_window_seconds", 180),

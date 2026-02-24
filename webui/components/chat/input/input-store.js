@@ -188,7 +188,8 @@ const model = {
 
   async nudge() {
     try {
-      const context = globalThis.getContext();
+      const context = await this._resolveContextIdForAction("nudge the agent");
+      if (!context) return;
       await globalThis.sendJsonData("/nudge", { ctxid: context });
     } catch (e) {
       if (globalThis.toastFetchError) {
@@ -199,8 +200,10 @@ const model = {
 
   async loadKnowledge() {
     try {
+      const ctxid = await this._resolveContextIdForAction("load knowledge");
+      if (!ctxid) return;
       const resp = await shortcuts.callJsonApi("/knowledge_path_get", {
-        ctxid: shortcuts.getCurrentContextId(),
+        ctxid,
       });
       if (!resp.ok) throw new Error("Error getting knowledge path");
       const path = resp.path;
@@ -220,7 +223,7 @@ const model = {
 
       // then reindex knowledge
       await globalThis.sendJsonData("/knowledge_reindex", {
-        ctxid: shortcuts.getCurrentContextId(),
+        ctxid,
       });
 
       // finished notification
@@ -254,12 +257,14 @@ const model = {
 
     input.onchange = async () => {
       try {
+        const ctxid = await this._resolveContextIdForAction("import knowledge");
+        if (!ctxid) return;
         const formData = new FormData();
         for (let file of input.files) {
           formData.append("files[]", file);
         }
 
-        formData.append("ctxid", globalThis.getContext());
+        formData.append("ctxid", ctxid);
 
         const response = await globalThis.fetchApi("/import_knowledge", {
           method: "POST",
@@ -288,17 +293,53 @@ const model = {
     input.click();
   },
 
+  async _resolveContextIdForAction(actionLabel = "this action") {
+    let ctxid = shortcuts.getCurrentContextId() || globalThis.getContext?.();
+    if (ctxid) return ctxid;
+
+    const contexts = Array.isArray(chatsStore.contexts)
+      ? chatsStore.contexts.filter((ctx) => ctx && ctx.id)
+      : [];
+    if (contexts.length === 1) {
+      const onlyContextId = contexts[0].id;
+      try {
+        await chatsStore.selectChat(onlyContextId);
+      } catch (_e) {
+        // best effort: continue with recovered id for this action
+      }
+      return onlyContextId;
+    }
+
+    if (globalThis.toast) {
+      if (contexts.length > 1) {
+        globalThis.toast(
+          `Select a chat first to ${actionLabel}.`,
+          "warning"
+        );
+      } else {
+        globalThis.toast(
+          `Create or select a chat first to ${actionLabel}.`,
+          "warning"
+        );
+      }
+    }
+    return null;
+  },
+
   async browseFiles(path) {
     if (!path) {
       try {
+        const ctxid = await this._resolveContextIdForAction("browse files");
+        if (!ctxid) return;
         const resp = await shortcuts.callJsonApi("/chat_files_path_get", {
-          ctxid: shortcuts.getCurrentContextId(),
+          ctxid,
         });
         if (resp.ok) path = resp.path;
       } catch (_e) {
         console.error("Error getting chat files path", _e);
       }
     }
+    if (!path) return;
     await fileBrowserStore.open(path);
   },
 

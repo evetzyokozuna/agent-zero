@@ -425,6 +425,9 @@ class Agent:
                     )
                     if guardrail_message:
                         return guardrail_message
+                    degradation_abort = self._check_degradation_auto_abort(set=set)
+                    if degradation_abort:
+                        return degradation_abort
 
                     # call message_loop_start extensions
                     await self.call_extensions(
@@ -648,6 +651,7 @@ class Agent:
         return None
 
     def _terminate_for_guardrail(self, reason: str, detail: str) -> str:
+        self._record_degradation_metric("guardrail_hits", 1)
         warning = self.read_prompt(
             "fw.msg_guardrail_terminate.md", reason=reason, detail=detail
         )
@@ -714,6 +718,19 @@ class Agent:
     async def retry_critical_exception(
         self, e: Exception, error_retries: int, delay: int = 3, max_retries: int = 1
     ) -> int:
+        set = settings.get_settings()
+        if bool(set.get("agent_retry_split_by_error_class_enabled", False)):
+            retry_class, class_max_retries, class_delay = self._classify_retry_policy(e, set)
+            max_retries = class_max_retries
+            delay = class_delay
+            if max_retries <= 0:
+                self.context.log.log(
+                    type="warning",
+                    heading="Critical error classified non-retryable",
+                    content=f"class={retry_class}; error={errors.format_error(e)}",
+                )
+                self.handle_critical_exception(e)
+
         if error_retries >= max_retries:
             self.handle_critical_exception(e)
 
@@ -996,6 +1013,19 @@ class Agent:
                 tool_args=tool_args,
                 set=set,
             )
+            preflight_msg = self._preflight_tool_call(
+                raw_tool_name=raw_tool_name,
+                execute_tool_args=execute_tool_args,
+                set=set,
+            )
+            if preflight_msg:
+                self.hist_add_warning(preflight_msg)
+                PrintStyle(font_color="orange", padding=True).print(preflight_msg)
+                self.context.log.log(
+                    type="warning",
+                    content=f"{self.agent_name}: {preflight_msg}",
+                )
+                return preflight_msg
             if bool(set.get("agent_guard_repeated_tool_action_enabled", False)):
                 repeat_guard_message = self._check_repeated_tool_action_guard(
                     raw_tool_name=raw_tool_name,
@@ -1064,6 +1094,7 @@ class Agent:
                         tool_name=tool_name,
                     )
 
+                    self._record_degradation_metric("tool_calls", 1)
                     response = await tool.execute(**execute_tool_args)
                     await self.handle_intervention()
 
@@ -1111,6 +1142,7 @@ class Agent:
             return None
         text = (tool_result or "").lower()
         if "context_missing_hard_stop" in text or "no context id provided" in text:
+            self._record_degradation_metric("missing_context_errors", 1)
             return self._terminate_for_guardrail(
                 reason="missing context id in tool/API flow",
                 detail=f"tool={tool_name}; hard-stop to prevent retry loops",
@@ -1149,6 +1181,7 @@ class Agent:
 
         max_allowed = threshold + 1  # first execution + N repeats
         if count > max_allowed:
+            self._record_degradation_metric("guardrail_hits", 1)
             return (
                 "[TOOL_GUARD:REPEATED_ACTION_HARD_STOP] "
                 f"Blocked repeated identical tool action for `{raw_tool_name}` "
@@ -1294,6 +1327,181 @@ class Agent:
         if isinstance(value, tuple):
             return tuple(self._resolve_spilled_tool_args(v) for v in value)
         return value
+
+    def _record_degradation_metric(self, key: str, delta: int = 1) -> None:
+        try:
+            now = time.time()
+            state = self.loop_data.params_persistent.setdefault("_degradation_metrics", {})
+            entry = state.get(key, {"count": 0, "ts": now, "window": []})
+            count = int(entry.get("count", 0) or 0) + delta
+            window = list(entry.get("window", []))
+            window.append(now)
+            if len(window) > 200:
+                window = window[-200:]
+            state[key] = {"count": count, "ts": now, "window": window}
+            self.loop_data.params_persistent["_degradation_metrics"] = state
+        except Exception:
+            return
+
+    def _read_degradation_metric(self, key: str) -> dict[str, Any]:
+        state = self.loop_data.params_persistent.get("_degradation_metrics", {})
+        got = state.get(key, {})
+        return {
+            "count": int(got.get("count", 0) or 0),
+            "window": list(got.get("window", [])),
+            "ts": float(got.get("ts", 0) or 0),
+        }
+
+    def _check_degradation_auto_abort(self, set: settings.Settings) -> str | None:
+        if not bool(set.get("agent_degradation_auto_abort_enabled", False)):
+            return None
+        tool_call_ceiling = int(set.get("agent_tool_call_ceiling_per_turn", 30))
+        guardrail_hits_per_minute = int(set.get("agent_guardrail_hits_ceiling_per_minute", 8))
+        missing_context_ceiling = int(set.get("agent_missing_context_errors_ceiling_per_turn", 1))
+
+        tool_calls = self._read_degradation_metric("tool_calls")["count"]
+        if tool_call_ceiling > 0 and tool_calls >= tool_call_ceiling:
+            return self._terminate_for_guardrail(
+                reason="degradation auto-abort: excessive tool calls",
+                detail=f"tool_calls={tool_calls}, ceiling={tool_call_ceiling}",
+            )
+
+        missing_context_errors = self._read_degradation_metric("missing_context_errors")["count"]
+        if missing_context_ceiling > 0 and missing_context_errors >= missing_context_ceiling:
+            return self._terminate_for_guardrail(
+                reason="degradation auto-abort: repeated missing context errors",
+                detail=(
+                    f"missing_context_errors={missing_context_errors}, "
+                    f"ceiling={missing_context_ceiling}"
+                ),
+            )
+
+        hits = self._read_degradation_metric("guardrail_hits")
+        now = time.time()
+        per_minute = [
+            ts for ts in hits["window"] if isinstance(ts, (int, float)) and (now - float(ts)) <= 60
+        ]
+        if guardrail_hits_per_minute > 0 and len(per_minute) >= guardrail_hits_per_minute:
+            return self._terminate_for_guardrail(
+                reason="degradation auto-abort: guardrail hit rate too high",
+                detail=(
+                    f"guardrail_hits_last_minute={len(per_minute)}, "
+                    f"ceiling={guardrail_hits_per_minute}"
+                ),
+            )
+        return None
+
+    def _preflight_tool_call(
+        self,
+        raw_tool_name: str,
+        execute_tool_args: dict[str, Any],
+        set: settings.Settings,
+    ) -> str | None:
+        if not bool(set.get("code_exec_tool_preflight_enabled", False)):
+            return None
+        if raw_tool_name.split(":", 1)[0] != "code_execution_tool":
+            return None
+        return self._preflight_code_execution_tool_args(execute_tool_args)
+
+    def _preflight_code_execution_tool_args(self, args: dict[str, Any]) -> str | None:
+        if not str(getattr(self.context, "id", "")).strip():
+            return (
+                "[TOOL_PREFLIGHT:MISSING_CONTEXT] context id is missing; "
+                "request a fresh context-bound operation."
+            )
+        runtime_name = str(args.get("runtime", "")).strip().lower()
+        valid_runtimes = {"python", "nodejs", "terminal", "file", "output", "reset"}
+        if runtime_name not in valid_runtimes:
+            return (
+                "[TOOL_PREFLIGHT:INVALID_RUNTIME] code_execution_tool requires a valid `runtime` "
+                f"({sorted(valid_runtimes)}). Got {runtime_name!r}."
+            )
+        workdir = str(settings.get_settings().get("workdir_path", "")).strip()
+        if not workdir:
+            return (
+                "[TOOL_PREFLIGHT:MISSING_WORKSPACE_ROOT] workdir_path is empty; "
+                "cannot safely execute path-affecting operations."
+            )
+
+        if runtime_name in {"python", "nodejs", "terminal"}:
+            code = args.get("code", "")
+            if not isinstance(code, str) or not code.strip():
+                return (
+                    "[TOOL_PREFLIGHT:MISSING_CODE] code_execution_tool runtime requires non-empty "
+                    "`code` content."
+                )
+            return None
+
+        if runtime_name == "file":
+            path = args.get("path", "")
+            if not isinstance(path, str) or not path.strip():
+                return "[TOOL_PREFLIGHT:MISSING_PATH] file runtime requires non-empty `path`."
+            normalized = files.normalize_a0_path(path.strip())
+            target = os.path.abspath(normalized)
+            if target in {"/", os.path.abspath(workdir)}:
+                return (
+                    "[TOOL_PREFLIGHT:UNSAFE_PATH] file runtime path resolves to an unsafe root/"
+                    "directory target. Provide a concrete file path."
+                )
+            if "content" not in args:
+                return "[TOOL_PREFLIGHT:MISSING_CONTENT] file runtime requires `content`."
+        return None
+
+    def _classify_retry_policy(
+        self, e: Exception, set: settings.Settings
+    ) -> tuple[str, int, int]:
+        text = errors.format_error(e).lower()
+        if any(
+            token in text
+            for token in [
+                "context_missing_hard_stop",
+                "no context id provided",
+                "stale_epoch_rejected",
+                "context not found",
+                "unauthorized",
+                "forbidden",
+                "csrf",
+                "invalid csrf token",
+            ]
+        ):
+            return "context_session_auth", 0, 0
+        if any(
+            token in text
+            for token in [
+                "[read_guard",
+                "[write_guard",
+                "[tool_guard",
+                "[strategy_guard",
+                "guardrail",
+            ]
+        ):
+            return "guardrail", 0, 0
+        if any(
+            token in text
+            for token in [
+                "timeout",
+                "timed out",
+                "temporarily unavailable",
+                "connection reset",
+                "connection refused",
+                "502",
+                "503",
+                "504",
+                "429",
+                "rate limit",
+                "network",
+            ]
+        ):
+            return (
+                "transient_io_network",
+                int(set.get("agent_transient_error_max_retries", 2)),
+                int(set.get("agent_transient_error_retry_delay_seconds", 2)),
+            )
+        return (
+            "other_critical",
+            int(set.get("agent_critical_error_max_retries", 1)),
+            int(set.get("agent_critical_error_retry_delay_seconds", 3)),
+        )
 
     async def handle_reasoning_stream(self, stream: str):
         await self.handle_intervention()

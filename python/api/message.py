@@ -1,7 +1,7 @@
 from agent import AgentContext, UserMessage
 from python.helpers.api import ApiHandler, Request, Response
 
-from python.helpers import files, extension, message_queue as mq
+from python.helpers import files, extension, message_queue as mq, session_epoch
 import os
 from python.helpers.security import safe_filename
 from python.helpers.defer import DeferredTask
@@ -9,7 +9,10 @@ from python.helpers.defer import DeferredTask
 
 class Message(ApiHandler):
     async def process(self, input: dict, request: Request) -> dict | Response:
-        task, context = await self.communicate(input=input, request=request)
+        task_or_response = await self.communicate(input=input, request=request)
+        if isinstance(task_or_response, Response):
+            return task_or_response
+        task, context = task_or_response
         return await self.respond(task, context)
 
     async def respond(self, task: DeferredTask, context: AgentContext):
@@ -17,6 +20,7 @@ class Message(ApiHandler):
         return {
             "message": result,
             "context": context.id,
+            "epoch": session_epoch.get_epoch(context),
         }
 
     async def communicate(self, input: dict, request: Request):
@@ -25,6 +29,7 @@ class Message(ApiHandler):
             text = request.form.get("text", "")
             ctxid = request.form.get("context", "")
             message_id = request.form.get("message_id", None)
+            request_epoch = session_epoch.parse_epoch(request.form.get("epoch", None))
             attachments = request.files.getlist("attachments")
             attachment_paths = []
 
@@ -48,6 +53,7 @@ class Message(ApiHandler):
             text = input_data.get("text", "")
             ctxid = input_data.get("context", "")
             message_id = input_data.get("message_id", None)
+            request_epoch = session_epoch.parse_epoch(input_data.get("epoch", None))
             attachment_paths = []
 
         # Now process the message
@@ -55,6 +61,9 @@ class Message(ApiHandler):
 
         # Obtain agent context
         context = self.use_context(ctxid)
+        stale_reason = session_epoch.stale_epoch_reason(context, request_epoch)
+        if stale_reason:
+            return Response(stale_reason, status=409)
 
         # call extension point, alow it to modify data
         data = { "message": message, "attachment_paths": attachment_paths }

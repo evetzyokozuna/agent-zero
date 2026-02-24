@@ -87,6 +87,7 @@ export async function sendMessage() {
         const formData = new FormData();
         formData.append("text", message);
         formData.append("context", context);
+        formData.append("epoch", String(messageQueueStore.getEpoch()));
         formData.append("message_id", messageId);
 
         for (let i = 0; i < attachmentsWithUrls.length; i++) {
@@ -102,6 +103,7 @@ export async function sendMessage() {
         const data = {
           text: message,
           context,
+          epoch: messageQueueStore.getEpoch(),
           message_id: messageId,
         };
         response = await api.fetchApi("/message_async", {

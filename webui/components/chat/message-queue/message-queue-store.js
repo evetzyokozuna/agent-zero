@@ -27,6 +27,10 @@ const model = {
     return this._epoch;
   },
 
+  getEpoch() {
+    return Number(this._epoch) || 0;
+  },
+
   _cancelPendingAddOps() {
     const pending = this._pendingAddOps || {};
     for (const op of Object.values(pending)) {
@@ -142,6 +146,7 @@ const model = {
           credentials: "same-origin",
           body: JSON.stringify({
             context,
+            epoch: this.getEpoch(),
             text,
             attachments: filenames,
             item_id: tempId,
@@ -197,6 +202,7 @@ const model = {
     try {
       await api.callJsonApi("/message_queue_remove", {
         context,
+        epoch: this.getEpoch(),
         item_id: itemId,
       });
     } catch (e) {
@@ -212,7 +218,7 @@ const model = {
     const context = globalThis.getContext?.();
     if (!context) return;
     try {
-      await api.callJsonApi("/message_queue_remove", { context });
+      await api.callJsonApi("/message_queue_remove", { context, epoch: this.getEpoch() });
     } catch (e) {
       console.error("Failed to clear queue:", e);
     }
@@ -224,6 +230,7 @@ const model = {
     try {
       await api.callJsonApi("/message_queue_send", {
         context,
+        epoch: this.getEpoch(),
         item_id: itemId,
       });
     } catch (e) {
@@ -254,7 +261,11 @@ const model = {
     if (!this.hasQueue) return;
     try {
       navStore.scrollToBottom();
-      await api.callJsonApi("/message_queue_send", { context, send_all: true });
+      await api.callJsonApi("/message_queue_send", {
+        context,
+        epoch: this.getEpoch(),
+        send_all: true,
+      });
     } catch (e) {
       console.error("Failed to send all queued:", e);
     }

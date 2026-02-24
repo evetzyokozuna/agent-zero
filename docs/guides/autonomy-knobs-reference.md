@@ -194,6 +194,36 @@ Common use:
 
 ---
 
+## 11) Remaining Degradation Recovery Controls (Priorities 7-10)
+
+Retry policy split by error class:
+
+- `agent_retry_split_by_error_class_enabled`
+- `agent_transient_error_max_retries`
+- `agent_transient_error_retry_delay_seconds`
+- `agent_critical_error_max_retries`
+- `agent_critical_error_retry_delay_seconds`
+
+Tool-call preflight validator:
+
+- `code_exec_tool_preflight_enabled`
+
+Deterministic critical-file mode:
+
+- `code_exec_deterministic_critical_mode_enabled`
+- `code_exec_deterministic_critical_patterns`
+- `code_exec_deterministic_critical_window_seconds`
+- `code_exec_deterministic_critical_break_after_write`
+
+Degradation telemetry auto-abort:
+
+- `agent_degradation_auto_abort_enabled`
+- `agent_tool_call_ceiling_per_turn`
+- `agent_guardrail_hits_ceiling_per_minute`
+- `agent_missing_context_errors_ceiling_per_turn`
+
+---
+
 ## Tuning Workflow
 
 1. Start from `docs/setup/env-examples/profile_balanced_production.env`.

@@ -679,6 +679,12 @@ class CodeExecution(Tool):
         normalized = files.normalize_a0_path(path)
         mode = "a" if append else "w"
         abs_path = str(Path(normalized).resolve())
+        deterministic_msg, deterministic_break = self._check_deterministic_critical_mode(
+            abs_path=abs_path, operation="write"
+        )
+        if deterministic_msg:
+            PrintStyle.warning(deterministic_msg)
+            return self.agent.read_prompt("fw.code.info.md", info=deterministic_msg), deterministic_break
         if bool(set.get("code_exec_guard_same_file_op_ceiling_enabled", False)):
             op_ceiling_msg, op_ceiling_break = self._check_file_op_ceiling(
                 abs_path=abs_path,
@@ -739,6 +745,17 @@ class CodeExecution(Tool):
             info = f"{op} file: {abs_path} ({len(content)} chars)."
             PrintStyle.info(info)
             self._record_file_write_success(abs_path=abs_path, content=content, append=append)
+            if (
+                bool(set.get("code_exec_deterministic_critical_mode_enabled", False))
+                and self._is_critical_file(abs_path)
+                and bool(set.get("code_exec_deterministic_critical_break_after_write", True))
+            ):
+                info += (
+                    "\n\n[DETERMINISTIC_CRITICAL:COMPLETE] "
+                    "Critical-file deterministic flow completed (read/transform/write/verify). "
+                    "Stop this turn and report results."
+                )
+                return self.agent.read_prompt("fw.code.info.md", info=info), True
             return self.agent.read_prompt("fw.code.info.md", info=info), False
         except Exception as e:
             info = f"File write failed for {abs_path}: {e}"
@@ -749,6 +766,12 @@ class CodeExecution(Tool):
         set = settings.get_settings()
         normalized = files.normalize_a0_path(path)
         abs_path = str(Path(normalized).resolve())
+        deterministic_msg, deterministic_break = self._check_deterministic_critical_mode(
+            abs_path=abs_path, operation="read"
+        )
+        if deterministic_msg:
+            PrintStyle.warning(deterministic_msg)
+            return self.agent.read_prompt("fw.code.info.md", info=deterministic_msg), deterministic_break
         if bool(set.get("code_exec_guard_same_file_op_ceiling_enabled", False)):
             op_ceiling_msg, op_ceiling_break = self._check_file_op_ceiling(
                 abs_path=abs_path,
@@ -955,6 +978,79 @@ class CodeExecution(Tool):
             )
             return True
         return False
+
+    def _is_critical_file(self, abs_path: str) -> bool:
+        set = settings.get_settings()
+        patterns_raw = str(
+            set.get("code_exec_deterministic_critical_patterns", "Today.md,*/Today.md")
+        )
+        patterns = [p.strip() for p in patterns_raw.split(",") if p.strip()]
+        if not patterns:
+            return False
+        name = Path(abs_path).name
+        posix = Path(abs_path).as_posix()
+        for pattern in patterns:
+            if "*" in pattern:
+                regex = "^" + re.escape(pattern).replace("\\*", ".*") + "$"
+                if re.match(regex, posix):
+                    return True
+                continue
+            if pattern == name or posix.endswith("/" + pattern) or posix == pattern:
+                return True
+        return False
+
+    def _check_deterministic_critical_mode(
+        self, abs_path: str, operation: str
+    ) -> tuple[str | None, bool]:
+        set = settings.get_settings()
+        if not bool(set.get("code_exec_deterministic_critical_mode_enabled", False)):
+            return None, False
+        if not self._is_critical_file(abs_path):
+            return None, False
+
+        window_seconds = int(set.get("code_exec_deterministic_critical_window_seconds", 900))
+        if window_seconds < 1:
+            window_seconds = 1
+        now = time.time()
+        state: dict = self.agent.get_data("_cet_deterministic_critical_state") or {}
+        entry = state.get(abs_path, {"read_count": 0, "write_count": 0, "ts": now})
+        last_ts = float(entry.get("ts", 0) or 0)
+        if (now - last_ts) > window_seconds:
+            entry = {"read_count": 0, "write_count": 0, "ts": now}
+
+        read_count = int(entry.get("read_count", 0) or 0)
+        write_count = int(entry.get("write_count", 0) or 0)
+
+        if operation == "read":
+            if write_count > 0:
+                return (
+                    "[DETERMINISTIC_CRITICAL:POST_WRITE_READ_BLOCKED] "
+                    f"Blocked additional read for critical file {abs_path} after write. "
+                    "Deterministic mode requires reporting results instead of re-reading in this turn.",
+                    True,
+                )
+            if read_count >= 1:
+                return (
+                    "[DETERMINISTIC_CRITICAL:READ_ONCE] "
+                    f"Blocked repeated read for critical file {abs_path}. "
+                    "Use previously retrieved content for transform/write.",
+                    True,
+                )
+            entry["read_count"] = read_count + 1
+        elif operation == "write":
+            if write_count >= 1:
+                return (
+                    "[DETERMINISTIC_CRITICAL:WRITE_ONCE] "
+                    f"Blocked repeated write for critical file {abs_path}. "
+                    "Deterministic mode allows one write per window.",
+                    True,
+                )
+            entry["write_count"] = write_count + 1
+
+        entry["ts"] = now
+        state[abs_path] = entry
+        self.agent.set_data("_cet_deterministic_critical_state", state)
+        return None, False
 
     def _check_file_op_ceiling(self, abs_path: str, operation: str) -> tuple[str | None, bool]:
         set = settings.get_settings()

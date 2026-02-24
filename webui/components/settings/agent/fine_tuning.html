@@ -205,6 +205,163 @@
             </div>
           </div>
 
+          <div class="subsection-title">Resilience Policy Controls</div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Split retry policy by error class</div>
+              <div class="field-description">Classifies errors (context/auth/guardrail/transient) and applies class-specific retry behavior.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.agent_retry_split_by_error_class_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Transient error max retries</div>
+              <div class="field-description">Retries allowed for transient network/timeout classes when split policy is enabled.</div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="0" step="1" x-model.number="$store.settings.settings.agent_transient_error_max_retries" />
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Transient retry delay (seconds)</div>
+              <div class="field-description">Delay between retries for transient classes.</div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="0" step="1" x-model.number="$store.settings.settings.agent_transient_error_retry_delay_seconds" />
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Critical error max retries</div>
+              <div class="field-description">Fallback retries for unclassified critical errors.</div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="0" step="1" x-model.number="$store.settings.settings.agent_critical_error_max_retries" />
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Critical retry delay (seconds)</div>
+              <div class="field-description">Delay between retries for fallback critical classes.</div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="0" step="1" x-model.number="$store.settings.settings.agent_critical_error_retry_delay_seconds" />
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Enable degradation auto-abort</div>
+              <div class="field-description">Aborts turn early when telemetry thresholds indicate active degradation.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.agent_degradation_auto_abort_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Tool calls per turn ceiling</div>
+              <div class="field-description">Auto-abort threshold for total tool calls in one turn.</div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="1" step="1" x-model.number="$store.settings.settings.agent_tool_call_ceiling_per_turn" />
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Guardrail hits per minute ceiling</div>
+              <div class="field-description">Auto-abort threshold for rapid guardrail firing.</div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="1" step="1" x-model.number="$store.settings.settings.agent_guardrail_hits_ceiling_per_minute" />
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Missing-context errors per turn ceiling</div>
+              <div class="field-description">Auto-abort threshold for repeated missing-context failures in one turn.</div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="1" step="1" x-model.number="$store.settings.settings.agent_missing_context_errors_ceiling_per_turn" />
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Enable tool preflight validator</div>
+              <div class="field-description">Validates runtime/path/payload shape before code execution tool calls.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.code_exec_tool_preflight_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Enable deterministic critical-file mode</div>
+              <div class="field-description">For critical files, enforces one-read/one-write behavior per window.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.code_exec_deterministic_critical_mode_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Critical-file patterns (comma-separated)</div>
+              <div class="field-description">Pattern list for deterministic mode, e.g. `Today.md,*/Today.md,/a0/usr/workdir/today/*`.</div>
+            </div>
+            <div class="field-control">
+              <input type="text" x-model="$store.settings.settings.code_exec_deterministic_critical_patterns" />
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Deterministic window (seconds)</div>
+              <div class="field-description">Window for one-read/one-write enforcement on critical files.</div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="1" step="1" x-model.number="$store.settings.settings.code_exec_deterministic_critical_window_seconds" />
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Break loop after critical write</div>
+              <div class="field-description">Ends current turn after deterministic critical write completes and verifies.</div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.code_exec_deterministic_critical_break_after_write" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
           <div class="subsection-title">Monologue Guardrails</div>
 
           <div class="field">
