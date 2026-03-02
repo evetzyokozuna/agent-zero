@@ -18,3 +18,5 @@ def test_settings_store_exposes_scoped_persistence_api() -> None:
     assert "persistSettingToScope" in content
     assert 'API.callJsonApi("settings_scope_override_set"' in content
     assert "fineTuningApplyScope" in content
+    assert 'API.callJsonApi("settings_fine_tuning_state_get"' in content
+    assert 'API.callJsonApi("settings_env_override_unset"' in content

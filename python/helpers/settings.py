@@ -655,6 +655,264 @@ def save_env_override(key: str, value: Any) -> Settings:
     return reload_settings()
 
 
+def remove_env_override(key: str) -> Settings:
+    defaults = get_default_settings()
+    if key not in defaults:
+        raise ValueError(f"Unknown setting key: {key}")
+    env_key = f"A0_SET_{key}"
+    dotenv.remove_dotenv_value(env_key)
+    dotenv.remove_dotenv_value(env_key.upper())
+    return reload_settings()
+
+
+def _collect_profile_names() -> list[str]:
+    names: set[str] = set()
+    for folder in ("agents", files.get_abs_path("usr", "agents")):
+        try:
+            for subdir in files.get_subdirectories(folder):
+                name = str(subdir or "").strip()
+                if name and name != "_example":
+                    names.add(name)
+        except Exception:
+            continue
+    return sorted(names)
+
+
+def _collect_project_names() -> list[str]:
+    try:
+        from python.helpers import projects
+
+        items = projects.get_active_projects_list()
+        return sorted(
+            [
+                str(item.get("name", "")).strip()
+                for item in items
+                if isinstance(item, dict) and str(item.get("name", "")).strip()
+            ]
+        )
+    except Exception:
+        return []
+
+
+def get_fine_tuning_target_options(
+    active_profile: str | None = None, active_project: str | None = None
+) -> list[dict[str, Any]]:
+    profile_names = _collect_profile_names()
+    project_names = _collect_project_names()
+    selected_profile = str(active_profile or "").strip()
+    selected_project = str(active_project or "").strip()
+
+    if selected_profile and selected_profile not in profile_names:
+        profile_names.insert(0, selected_profile)
+    if selected_project and selected_project not in project_names:
+        project_names.insert(0, selected_project)
+
+    options: list[dict[str, Any]] = [
+        {
+            "value": "global",
+            "scope": "global",
+            "label": "Global (usr/settings.json)",
+            "title": "General baseline scope",
+            "disabled": False,
+        },
+        {
+            "value": "__sep_profile",
+            "scope": "separator",
+            "label": "--- Profile Settings ---",
+            "title": "",
+            "disabled": True,
+        },
+    ]
+    if profile_names:
+        for profile in profile_names:
+            options.append(
+                {
+                    "value": f"profile::{profile}",
+                    "scope": "profile",
+                    "profile": profile,
+                    "label": f"{profile} Profile (usr/agents/{profile}/settings.json)",
+                    "title": f"Profile-specific overrides for {profile}",
+                    "disabled": False,
+                }
+            )
+    else:
+        options.append(
+            {
+                "value": "__none_profile",
+                "scope": "none",
+                "label": "none",
+                "title": "",
+                "disabled": True,
+            }
+        )
+
+    options.append(
+        {
+            "value": "__sep_project",
+            "scope": "separator",
+            "label": "--- Project Settings ---",
+            "title": "",
+            "disabled": True,
+        }
+    )
+    if project_names:
+        for project in project_names:
+            options.append(
+                {
+                    "value": f"project::{project}",
+                    "scope": "project",
+                    "project": project,
+                    "label": f"{project} Project (usr/projects/{project}/.a0proj/settings.json)",
+                    "title": f"Project overrides for {project}",
+                    "disabled": False,
+                }
+            )
+    else:
+        options.append(
+            {
+                "value": "__none_project",
+                "scope": "none",
+                "label": "none",
+                "title": "",
+                "disabled": True,
+            }
+        )
+
+    options.append(
+        {
+            "value": "__sep_project_profile",
+            "scope": "separator",
+            "label": "--- Project + Profile Settings ---",
+            "title": "",
+            "disabled": True,
+        }
+    )
+    project_profile_count = 0
+    for project in project_names:
+        for profile in profile_names:
+            project_profile_count += 1
+            options.append(
+                {
+                    "value": f"project_profile::{project}::{profile}",
+                    "scope": "project_profile",
+                    "project": project,
+                    "profile": profile,
+                    "label": (
+                        f"{project}-{profile} Profile "
+                        f"(usr/projects/{project}/.a0proj/agents/{profile}/settings.json)"
+                    ),
+                    "title": f"Most specific non-env overrides for {project} + {profile}",
+                    "disabled": False,
+                }
+            )
+    if project_profile_count == 0:
+        options.append(
+            {
+                "value": "__none_project_profile",
+                "scope": "none",
+                "label": "none",
+                "title": "",
+                "disabled": True,
+            }
+        )
+
+    options.extend(
+        [
+            {
+                "value": "__sep_env",
+                "scope": "separator",
+                "label": "--- .env Lockable Settings ---",
+                "title": "",
+                "disabled": True,
+            },
+            {
+                "value": "env",
+                "scope": "env",
+                "label": ".env (/a0/.env)",
+                "title": "Deployment lock layer (highest precedence)",
+                "disabled": False,
+            },
+        ]
+    )
+    return options
+
+
+def get_setting_source_map(
+    profile: str | None = None, project: str | None = None
+) -> dict[str, dict[str, Any]]:
+    defaults = get_default_settings()
+    profile_name = str(profile or "").strip()
+    project_name = str(project or "").strip()
+
+    global_data = _read_settings_json_file(SETTINGS_FILE)
+    builtin_profile_data: dict[str, Any] = {}
+    user_profile_data: dict[str, Any] = {}
+    project_data: dict[str, Any] = {}
+    project_profile_data: dict[str, Any] = {}
+
+    if profile_name:
+        builtin_profile_data = _read_settings_json_file(
+            files.get_abs_path("agents", profile_name, "settings.json")
+        )
+        user_profile_data = _read_settings_json_file(
+            files.get_abs_path("usr", "agents", profile_name, "settings.json")
+        )
+    if project_name:
+        from python.helpers import projects
+
+        project_data = _read_settings_json_file(
+            files.get_abs_path(projects.get_project_meta_folder(project_name, "settings.json"))
+        )
+        if profile_name:
+            project_profile_data = _read_settings_json_file(
+                files.get_abs_path(
+                    projects.get_project_meta_folder(
+                        project_name, "agents", profile_name, "settings.json"
+                    )
+                )
+            )
+
+    env_overrides = get_env_overrides(list(defaults.keys()))
+    labels = {
+        "default": "Defaults",
+        "global": "Global Settings",
+        "builtin_profile": f"Built-in {profile_name} Profile" if profile_name else "Built-in Profile",
+        "profile": f"{profile_name} Profile" if profile_name else "Profile",
+        "project": f"{project_name} Project" if project_name else "Project",
+        "project_profile": (
+            f"{project_name}-{profile_name} Profile"
+            if project_name and profile_name
+            else "Project + Profile"
+        ),
+        "env": ".env",
+    }
+
+    source_map: dict[str, dict[str, Any]] = {}
+    for key in defaults.keys():
+        source = "default"
+        if key in global_data:
+            source = "global"
+        if key in builtin_profile_data:
+            source = "builtin_profile"
+        if key in user_profile_data:
+            source = "profile"
+        if key in project_data:
+            source = "project"
+        if key in project_profile_data:
+            source = "project_profile"
+        source_without_env = source
+        if key in env_overrides:
+            source = "env"
+        source_map[key] = {
+            "source": source,
+            "source_label": labels.get(source, source),
+            "source_without_env": source_without_env,
+            "source_without_env_label": labels.get(source_without_env, source_without_env),
+            "is_env_locked": bool(key in env_overrides),
+        }
+    return source_map
+
+
 def save_scope_override(
     key: str,
     value: Any,

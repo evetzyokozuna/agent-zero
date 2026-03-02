@@ -59,3 +59,18 @@ def save_dotenv_value(key: str, value: str):
         f.writelines(lines)
         f.truncate()
     load_dotenv()
+
+
+def remove_dotenv_value(key: str):
+    dotenv_path = get_dotenv_file_path()
+    if not os.path.isfile(dotenv_path):
+        return
+    with open(dotenv_path, "r+", encoding="utf-8") as f:
+        lines = f.readlines()
+        kept = [line for line in lines if not re.match(rf"^\s*{key}\s*=", line)]
+        f.seek(0)
+        f.writelines(kept)
+        f.truncate()
+    # Keep process env in sync with on-disk .env.
+    os.environ.pop(key, None)
+    load_dotenv()

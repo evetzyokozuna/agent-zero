@@ -6,7 +6,7 @@
   <body>
     <div x-data>
       <template x-if="$store.settings.settings">
-        <div>
+        <div data-fine-tuning-root>
           <div class="section-title">Fine-Tuning</div>
           <div class="section-description">
             Structured controls for autonomy and execution knobs. These settings define how the agent behaves under long-running workloads.
@@ -15,45 +15,20 @@
           <div class="field">
             <div class="field-label">
               <div class="field-title">Fine-Tuning apply target</div>
-              <div class="field-description">Choose where setting saves are persisted (general to specialized). .env is explicit lock scope and always wins.</div>
             </div>
             <div class="field-control">
-              <select x-model="$store.settings.fineTuningApplyScope">
+              <select
+                x-model="$store.settings.fineTuningApplyTargetValue"
+                @change="$store.settings.onFineTuningTargetChanged()">
                 <template x-for="opt in $store.settings.fineTuningScopeOptions" :key="opt.value">
-                  <option :value="opt.value" x-text="opt.label"></option>
+                  <option
+                    :value="opt.value"
+                    :disabled="!!opt.disabled"
+                    :title="opt.title || ''"
+                    x-text="opt.label"></option>
                 </template>
               </select>
-              <input
-                type="text"
-                placeholder="profile (optional override)"
-                x-model="$store.settings.fineTuningApplyProfile"
-                x-show="$store.settings.fineTuningApplyScope === 'profile' || $store.settings.fineTuningApplyScope === 'project_profile'" />
-              <input
-                type="text"
-                placeholder="project (optional, otherwise inferred from active context)"
-                x-model="$store.settings.fineTuningApplyProject"
-                x-show="$store.settings.fineTuningApplyScope === 'project' || $store.settings.fineTuningApplyScope === 'project_profile'" />
-              <div class="field-description" x-text="$store.settings.fineTuningScopeDescription"></div>
             </div>
-          </div>
-
-          <div class="env-override-panel" x-show="$store.settings.getEnvOverrideKeys().length > 0">
-            <div class="env-override-title">Active .env Overrides Detected</div>
-            <div class="env-override-description">
-              Values listed here are currently controlled by <code>A0_SET_*</code> in <code>.env</code>. UI saves to <code>settings.json</code> will be overridden on read. Use the action button to explicitly persist the current UI value into <code>.env</code>.
-            </div>
-            <template x-for="key in $store.settings.getEnvOverrideKeys()" :key="key">
-              <div class="env-override-row">
-                <div class="env-override-key" x-text="key"></div>
-                <div class="env-override-values">
-                  <span class="env-badge">.env: <span x-text="$store.settings.getEnvOverrideValue(key)"></span></span>
-                  <span class="ui-badge">UI: <span x-text="$store.settings.settings?.[key]"></span></span>
-                </div>
-                <button class="button button-small" @click="$store.settings.persistSettingToEnv(key)">
-                  Overwrite .env with UI value
-                </button>
-              </div>
-            </template>
           </div>
 
           <div class="subsection-title">Execution Routing Modes (Opt-In)</div>
@@ -65,9 +40,6 @@
             <div class="field-label">
               <div class="field-title">Execution mode</div>
               <div class="field-description">`tool_first` (current), `tool_first_fallback`, `hybrid`, `model_first`. Default is strict backward-compatible Tool-First.</div>
-              <div class="field-description" x-show="$store.settings.isEnvOverridden('agent_execution_mode')">
-                <span class="env-badge">.env override active: <span x-text="$store.settings.getEnvOverrideValue('agent_execution_mode')"></span></span>
-              </div>
             </div>
             <div class="field-control">
               <select x-model="$store.settings.settings.agent_execution_mode">
@@ -76,11 +48,6 @@
                 <option value="hybrid">hybrid (plain text or tool call)</option>
                 <option value="model_first">model_first (plain text first, tool for execution)</option>
               </select>
-              <button
-                class="button button-small"
-                @click="$store.settings.persistSettingToScope('agent_execution_mode')">
-                Save this value to selected target
-              </button>
             </div>
           </div>
 
@@ -88,20 +55,12 @@
             <div class="field-label">
               <div class="field-title">Allow plain-text response path</div>
               <div class="field-description">Master gate for accepting non-JSON responses in non-default routing modes. OFF preserves strict JSON-only behavior.</div>
-              <div class="field-description" x-show="$store.settings.isEnvOverridden('agent_execution_allow_plain_text_response')">
-                <span class="env-badge">.env override active: <span x-text="$store.settings.getEnvOverrideValue('agent_execution_allow_plain_text_response')"></span></span>
-              </div>
             </div>
             <div class="field-control">
               <label class="toggle">
                 <input type="checkbox" x-model="$store.settings.settings.agent_execution_allow_plain_text_response" />
                 <span class="toggler"></span>
               </label>
-              <button
-                class="button button-small"
-                @click="$store.settings.persistSettingToScope('agent_execution_allow_plain_text_response')">
-                Save this value to selected target
-              </button>
             </div>
           </div>
 
@@ -109,20 +68,12 @@
             <div class="field-label">
               <div class="field-title">Require tool route for risky intents</div>
               <div class="field-description">When enabled, risky/executable intents (writes, deletes, shell commands) must use a JSON tool call even in Hybrid or Model-First mode.</div>
-              <div class="field-description" x-show="$store.settings.isEnvOverridden('agent_execution_require_tool_for_risky_intents')">
-                <span class="env-badge">.env override active: <span x-text="$store.settings.getEnvOverrideValue('agent_execution_require_tool_for_risky_intents')"></span></span>
-              </div>
             </div>
             <div class="field-control">
               <label class="toggle">
                 <input type="checkbox" x-model="$store.settings.settings.agent_execution_require_tool_for_risky_intents" />
                 <span class="toggler"></span>
               </label>
-              <button
-                class="button button-small"
-                @click="$store.settings.persistSettingToScope('agent_execution_require_tool_for_risky_intents')">
-                Save this value to selected target
-              </button>
             </div>
           </div>
 
@@ -130,17 +81,9 @@
             <div class="field-label">
               <div class="field-title">Tool-First fallback misformat threshold</div>
               <div class="field-description">For `tool_first_fallback`, plain-text path activates after this many consecutive misformats.</div>
-              <div class="field-description" x-show="$store.settings.isEnvOverridden('agent_tool_first_fallback_after_misformats')">
-                <span class="env-badge">.env override active: <span x-text="$store.settings.getEnvOverrideValue('agent_tool_first_fallback_after_misformats')"></span></span>
-              </div>
             </div>
             <div class="field-control">
               <input type="number" min="1" step="1" x-model.number="$store.settings.settings.agent_tool_first_fallback_after_misformats" />
-              <button
-                class="button button-small"
-                @click="$store.settings.persistSettingToScope('agent_tool_first_fallback_after_misformats')">
-                Save this value to selected target
-              </button>
             </div>
           </div>
 
@@ -148,17 +91,9 @@
             <div class="field-label">
               <div class="field-title">Risky-intent regex</div>
               <div class="field-description">Regex used to classify requests as executable/risky for enforced tool routing.</div>
-              <div class="field-description" x-show="$store.settings.isEnvOverridden('agent_execution_risky_intent_regex')">
-                <span class="env-badge">.env override active: <span x-text="$store.settings.getEnvOverrideValue('agent_execution_risky_intent_regex')"></span></span>
-              </div>
             </div>
             <div class="field-control">
               <input type="text" x-model="$store.settings.settings.agent_execution_risky_intent_regex" />
-              <button
-                class="button button-small"
-                @click="$store.settings.persistSettingToScope('agent_execution_risky_intent_regex')">
-                Save this value to selected target
-              </button>
             </div>
           </div>
 
@@ -1008,40 +943,6 @@
 </html>
 
 <style>
-  .env-override-panel {
-    margin: 0.75rem 0 1rem;
-    border: 1px solid var(--color-border, rgba(255, 255, 255, 0.12));
-    border-radius: 8px;
-    padding: 0.75rem;
-    background: rgba(255, 173, 51, 0.08);
-  }
-  .env-override-title {
-    font-size: 0.95rem;
-    font-weight: 700;
-    margin-bottom: 0.35rem;
-  }
-  .env-override-description {
-    font-size: 0.85rem;
-    opacity: 0.9;
-    margin-bottom: 0.5rem;
-  }
-  .env-override-row {
-    display: grid;
-    grid-template-columns: 1fr 2fr auto;
-    gap: 0.5rem;
-    align-items: center;
-    margin: 0.35rem 0;
-  }
-  .env-override-key {
-    font-family: monospace;
-    font-size: 0.85rem;
-    word-break: break-word;
-  }
-  .env-override-values {
-    display: flex;
-    gap: 0.35rem;
-    flex-wrap: wrap;
-  }
   .env-badge, .ui-badge {
     font-size: 0.78rem;
     border: 1px solid var(--color-border, rgba(255, 255, 255, 0.2));
@@ -1059,5 +960,27 @@
     color: var(--color-text, #ddd);
     border-top: 1px solid var(--color-border, rgba(255, 255, 255, 0.12));
     padding-top: 0.75rem;
+  }
+  .setting-source-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.35rem;
+    font-size: 0.78rem;
+  }
+  .setting-source-text {
+    opacity: 0.9;
+  }
+  .setting-source-link {
+    border: none;
+    background: transparent;
+    color: var(--color-primary, #5aa9ff);
+    padding: 0;
+    font-size: 0.78rem;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .setting-source-link:hover {
+    opacity: 0.85;
   }
 </style>
