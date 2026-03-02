@@ -1,0 +1,6 @@
+{
+  "agent_execution_mode": "model_first",
+  "agent_execution_allow_plain_text_response": true,
+  "agent_execution_require_tool_for_risky_intents": true,
+  "agent_execution_risky_intent_regex": "\\b(write|edit|run|execute|terminal|shell|command|delete|remove)\\b"
+}

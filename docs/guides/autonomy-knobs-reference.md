@@ -7,9 +7,12 @@ All keys use `A0_SET_<setting_name>`.
 ## UI and `.env` override behavior
 
 - If `A0_SET_<setting_name>` exists in `.env`, it overrides UI-saved `settings.json` for that key at read time.
+- `.env` is an explicit lock layer; use it for deployment pinning, not polymorphic inheritance.
 - Fine-Tuning surfaces active overrides in an **Active .env Overrides Detected** panel.
 - Use **Overwrite .env with UI value** to explicitly update the corresponding `A0_SET_*` key from the current UI value.
 - Use a normal UI save when no `.env` override is active for that key.
+
+For full global/profile/project inheritance order, see `settings-precedence-hierarchy.md`.
 
 Example:
 
@@ -221,6 +224,32 @@ Degradation telemetry auto-abort:
 - `agent_tool_call_ceiling_per_turn`
 - `agent_guardrail_hits_ceiling_per_minute`
 - `agent_missing_context_errors_ceiling_per_turn`
+
+---
+
+## 12) Execution Routing Architecture Modes
+
+- `agent_execution_mode`
+  - `tool_first` (default, current strict behavior)
+  - `tool_first_fallback` (strict first, optional fallback after misformat threshold)
+  - `hybrid` (plain text or tool call)
+  - `model_first` (plain text first; tools for execution)
+- `agent_execution_allow_plain_text_response`
+  - Master gate for accepting non-JSON assistant output in non-default modes.
+  - Default `false` preserves strict contract.
+- `agent_execution_require_tool_for_risky_intents`
+  - Forces tool route for risky/executable intents in Hybrid/Model-First modes.
+  - Recommended `true` for production.
+- `agent_tool_first_fallback_after_misformats`
+  - Consecutive misformat threshold before fallback activation in `tool_first_fallback`.
+- `agent_execution_risky_intent_regex`
+  - Regex used to classify requests as risky/executable.
+
+Expected outcomes:
+
+- keep defaults untouched -> no behavior change from existing deployments
+- enable plain-text path in hybrid/model-first -> better conversational handling, with policyable execution safety
+- tune risky-intent regex conservatively to avoid accidental plain-text acceptance for executable asks
 
 ---
 

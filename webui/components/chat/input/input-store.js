@@ -329,12 +329,24 @@ const model = {
   async browseFiles(path) {
     if (!path) {
       try {
-        const ctxid = await this._resolveContextIdForAction("browse files");
-        if (!ctxid) return;
-        const resp = await shortcuts.callJsonApi("/chat_files_path_get", {
-          ctxid,
-        });
-        if (resp.ok) path = resp.path;
+        const ctxid = shortcuts.getCurrentContextId() || globalThis.getContext?.();
+        if (ctxid) {
+          const resp = await shortcuts.callJsonApi("/chat_files_path_get", {
+            ctxid,
+          });
+          if (resp.ok) path = resp.path;
+        } else {
+          // Dashboard file browsing should remain usable without chat selection.
+          // Fall back to global workdir path instead of calling context-bound APIs with empty ctxid.
+          const settingsResp = await shortcuts.callJsonApi("settings_get", null);
+          path = settingsResp?.settings?.workdir_path || "/a0/usr/workdir";
+          if (globalThis.toast) {
+            globalThis.toast(
+              "No chat selected. Opened default workspace files.",
+              "info"
+            );
+          }
+        }
       } catch (_e) {
         console.error("Error getting chat files path", _e);
       }

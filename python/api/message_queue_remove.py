@@ -2,6 +2,7 @@ from python.helpers.api import ApiHandler, Request, Response
 from python.helpers import message_queue as mq, session_epoch
 from agent import AgentContext
 from python.helpers.state_monitor_integration import mark_dirty_for_context
+import json
 
 class MessageQueueRemove(ApiHandler):
     """Remove message(s) from queue."""
@@ -14,7 +15,19 @@ class MessageQueueRemove(ApiHandler):
             context, session_epoch.parse_epoch(input.get("epoch", None))
         )
         if stale_reason:
-            return Response(stale_reason, status=409)
+            return Response(
+                response=json.dumps(
+                    {
+                        "ok": False,
+                        "code": "STALE_EPOCH_REJECTED",
+                        "error": stale_reason,
+                        "context": context.id,
+                        "epoch": session_epoch.get_epoch(context),
+                    }
+                ),
+                status=409,
+                mimetype="application/json",
+            )
 
         item_id = input.get("item_id")  # None means clear all
         remaining = mq.remove(context, item_id)

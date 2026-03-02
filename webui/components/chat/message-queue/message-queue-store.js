@@ -31,6 +31,35 @@ const model = {
     return Number(this._epoch) || 0;
   },
 
+  setEpoch(epoch) {
+    const parsed = Number(epoch);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      this._epoch = Math.floor(parsed);
+    }
+    return this._epoch;
+  },
+
+  _applyServerEpoch(payload) {
+    if (!payload || typeof payload !== "object") return;
+    if (Object.prototype.hasOwnProperty.call(payload, "epoch")) {
+      this.setEpoch(payload.epoch);
+    }
+  },
+
+  async syncEpochForContext(context) {
+    if (!context) return this.getEpoch();
+    try {
+      const response = await api.callJsonApi("/pause", {
+        paused: false,
+        context,
+      });
+      this._applyServerEpoch(response);
+    } catch (_e) {
+      // no-op
+    }
+    return this.getEpoch();
+  },
+
   _cancelPendingAddOps() {
     const pending = this._pendingAddOps || {};
     for (const op of Object.values(pending)) {
@@ -155,6 +184,12 @@ const model = {
         });
 
         if (!resp || !resp.ok) {
+          try {
+            const errJson = await resp.json();
+            this._applyServerEpoch(errJson);
+          } catch (_e) {
+            // no-op
+          }
           return false;
         }
         if ((Number(this._epoch) || 0) !== opEpoch) {
@@ -162,6 +197,7 @@ const model = {
         }
 
         const response = await resp.json();
+        this._applyServerEpoch(response);
 
         return response?.ok || false;
       } catch (e) {
@@ -200,11 +236,12 @@ const model = {
     }
 
     try {
-      await api.callJsonApi("/message_queue_remove", {
+      const response = await api.callJsonApi("/message_queue_remove", {
         context,
         epoch: this.getEpoch(),
         item_id: itemId,
       });
+      this._applyServerEpoch(response);
     } catch (e) {
       console.error("Failed to remove from queue:", e);
     }
@@ -218,7 +255,11 @@ const model = {
     const context = globalThis.getContext?.();
     if (!context) return;
     try {
-      await api.callJsonApi("/message_queue_remove", { context, epoch: this.getEpoch() });
+      const response = await api.callJsonApi("/message_queue_remove", {
+        context,
+        epoch: this.getEpoch(),
+      });
+      this._applyServerEpoch(response);
     } catch (e) {
       console.error("Failed to clear queue:", e);
     }
@@ -228,11 +269,12 @@ const model = {
     const context = globalThis.getContext?.();
     if (!context) return;
     try {
-      await api.callJsonApi("/message_queue_send", {
+      const response = await api.callJsonApi("/message_queue_send", {
         context,
         epoch: this.getEpoch(),
         item_id: itemId,
       });
+      this._applyServerEpoch(response);
     } catch (e) {
       console.error("Failed to send queued message:", e);
     }
@@ -261,11 +303,12 @@ const model = {
     if (!this.hasQueue) return;
     try {
       navStore.scrollToBottom();
-      await api.callJsonApi("/message_queue_send", {
+      const response = await api.callJsonApi("/message_queue_send", {
         context,
         epoch: this.getEpoch(),
         send_all: true,
       });
+      this._applyServerEpoch(response);
     } catch (e) {
       console.error("Failed to send all queued:", e);
     }

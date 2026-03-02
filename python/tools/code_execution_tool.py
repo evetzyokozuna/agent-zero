@@ -76,7 +76,7 @@ class CodeExecution(Tool):
         reset = bool(exec_args.get("reset", False) or runtime == "reset")
         code = ""
         max_input_chars = int(
-            settings.get_settings().get("code_exec_max_input_chars", 60000)
+            settings.get_effective_settings(self.agent).get("code_exec_max_input_chars", 60000)
         )
 
         if runtime in {"python", "nodejs", "terminal"}:
@@ -166,7 +166,7 @@ class CodeExecution(Tool):
                 code=code, session=session, reset=reset
             )
         elif runtime == "terminal":
-            set = settings.get_settings()
+            set = settings.get_effective_settings(self.agent)
             if bool(set.get("code_exec_guard_repetitive_terminal_read_enabled", False)):
                 repetitive_msg, repetitive_break = self._check_repetitive_terminal_command(
                     session=session, command=code
@@ -280,7 +280,7 @@ class CodeExecution(Tool):
     async def execute_terminal_command(
         self, session: int, command: str, reset: bool = False
     ):
-        set = settings.get_settings()
+        set = settings.get_effective_settings(self.agent)
         guard_unterminated_heredoc = bool(
             set.get("code_exec_guard_unterminated_heredoc_enabled", False)
         )
@@ -651,7 +651,7 @@ class CodeExecution(Tool):
         output = self._strip_runtime_noise_lines(output)
         # Strip every line of output before truncation
         # output = "\n".join(line.strip() for line in output.splitlines())
-        set = settings.get_settings()
+        set = settings.get_effective_settings(self.agent)
         max_chars = int(set.get("code_exec_output_max_chars", 1000000))
         auto_dump = bool(set.get("code_exec_auto_dump_large_output", True))
         dump_dir = str(set.get("code_exec_dump_dir", "usr/tmp/code_exec"))
@@ -675,7 +675,7 @@ class CodeExecution(Tool):
     async def execute_file_write(
         self, path: str, content: str, append: bool = False
     ) -> tuple[str, bool]:
-        set = settings.get_settings()
+        set = settings.get_effective_settings(self.agent)
         normalized = files.normalize_a0_path(path)
         mode = "a" if append else "w"
         abs_path = str(Path(normalized).resolve())
@@ -763,7 +763,7 @@ class CodeExecution(Tool):
             return self.agent.read_prompt("fw.code.info.md", info=info), False
 
     async def execute_file_read(self, path: str) -> tuple[str, bool]:
-        set = settings.get_settings()
+        set = settings.get_effective_settings(self.agent)
         normalized = files.normalize_a0_path(path)
         abs_path = str(Path(normalized).resolve())
         deterministic_msg, deterministic_break = self._check_deterministic_critical_mode(
@@ -943,7 +943,7 @@ class CodeExecution(Tool):
         meta: dict = self.agent.get_data("_cet_file_write_meta") or {}
         prev = meta.get(abs_path) or {}
         now = time.time()
-        set = settings.get_settings()
+        set = settings.get_effective_settings(self.agent)
         retry_window_seconds = int(
             set.get("code_exec_regressive_guard_retry_window_seconds", 120)
         )
@@ -965,7 +965,7 @@ class CodeExecution(Tool):
         meta: dict = self.agent.get_data("_cet_file_write_meta") or {}
         prev = meta.get(abs_path) or {}
         count = int(prev.get("guard_reject_count", 0))
-        set = settings.get_settings()
+        set = settings.get_effective_settings(self.agent)
         retry_threshold = int(
             set.get("code_exec_regressive_guard_retry_threshold", 3)
         )
@@ -980,7 +980,7 @@ class CodeExecution(Tool):
         return False
 
     def _is_critical_file(self, abs_path: str) -> bool:
-        set = settings.get_settings()
+        set = settings.get_effective_settings(self.agent)
         patterns_raw = str(
             set.get("code_exec_deterministic_critical_patterns", "Today.md,*/Today.md")
         )
@@ -1002,7 +1002,7 @@ class CodeExecution(Tool):
     def _check_deterministic_critical_mode(
         self, abs_path: str, operation: str
     ) -> tuple[str | None, bool]:
-        set = settings.get_settings()
+        set = settings.get_effective_settings(self.agent)
         if not bool(set.get("code_exec_deterministic_critical_mode_enabled", False)):
             return None, False
         if not self._is_critical_file(abs_path):
@@ -1053,7 +1053,7 @@ class CodeExecution(Tool):
         return None, False
 
     def _check_file_op_ceiling(self, abs_path: str, operation: str) -> tuple[str | None, bool]:
-        set = settings.get_settings()
+        set = settings.get_effective_settings(self.agent)
         read_ceiling = int(set.get("code_exec_same_file_read_ceiling", 2))
         write_ceiling = int(set.get("code_exec_same_file_write_ceiling", 2))
         window_seconds = int(set.get("code_exec_file_op_window_seconds", 180))
@@ -1100,7 +1100,7 @@ class CodeExecution(Tool):
         blocked = meta.get(key)
         if not blocked:
             return None, False
-        set = settings.get_settings()
+        set = settings.get_effective_settings(self.agent)
         ttl_seconds = int(set.get("code_exec_strategy_block_ttl_seconds", 300))
         if ttl_seconds < 1:
             ttl_seconds = 1
@@ -1229,7 +1229,7 @@ class CodeExecution(Tool):
 
     def _get_timeouts(self, output_runtime: bool = False) -> dict[str, int]:
         defaults = OUTPUT_TIMEOUTS if output_runtime else CODE_EXEC_TIMEOUTS
-        set = settings.get_settings()
+        set = settings.get_effective_settings(self.agent)
         return {
             "first_output_timeout": int(
                 set.get("code_exec_first_output_timeout", defaults["first_output_timeout"])
@@ -1346,7 +1346,7 @@ class CodeExecution(Tool):
         if project_name:
             path = projects.get_project_folder(project_name)
         else:
-            set = settings.get_settings()
+            set = settings.get_effective_settings(self.agent)
             path = set.get("workdir_path")
 
         if not path:

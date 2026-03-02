@@ -83,22 +83,26 @@ export async function sendMessage() {
 
         // sleep one frame to render the message before upload starts - better UX
         sleep(0);
+      }
 
-        const formData = new FormData();
-        formData.append("text", message);
-        formData.append("context", context);
-        formData.append("epoch", String(messageQueueStore.getEpoch()));
-        formData.append("message_id", messageId);
+      const sendOnce = async () => {
+        if (hasAttachments) {
+          const formData = new FormData();
+          formData.append("text", message);
+          formData.append("context", context);
+          formData.append("epoch", String(messageQueueStore.getEpoch()));
+          formData.append("message_id", messageId);
 
-        for (let i = 0; i < attachmentsWithUrls.length; i++) {
-          formData.append("attachments", attachmentsWithUrls[i].file);
+          for (let i = 0; i < attachmentsWithUrls.length; i++) {
+            formData.append("attachments", attachmentsWithUrls[i].file);
+          }
+
+          return await api.fetchApi("/message_async", {
+            method: "POST",
+            body: formData,
+          });
         }
 
-        response = await api.fetchApi("/message_async", {
-          method: "POST",
-          body: formData,
-        });
-      } else {
         // For text-only messages
         const data = {
           text: message,
@@ -106,21 +110,54 @@ export async function sendMessage() {
           epoch: messageQueueStore.getEpoch(),
           message_id: messageId,
         };
-        response = await api.fetchApi("/message_async", {
+        return await api.fetchApi("/message_async", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(data),
         });
-      }
+      };
+
+      response = await sendOnce();
 
       // Handle response
+      if (!response.ok) {
+        let errMessage = "";
+        let errJson = null;
+        try {
+          errJson = await response.json();
+          errMessage =
+            errJson?.error ||
+            errJson?.message ||
+            `Request failed with status ${response.status}`;
+        } catch (_e) {
+          errMessage = await response.text();
+        }
+
+        const staleEpoch =
+          String(errJson?.code || "").toUpperCase() === "STALE_EPOCH_REJECTED" ||
+          String(errMessage || "").toUpperCase().includes("STALE_EPOCH_REJECTED");
+        if (staleEpoch && context) {
+          await messageQueueStore.syncEpochForContext(context);
+          response = await sendOnce();
+          if (!response.ok) {
+            throw new Error(
+              errMessage || `Request failed with status ${response.status}`
+            );
+          }
+        } else {
+          throw new Error(errMessage || `Request failed with status ${response.status}`);
+        }
+      }
       const jsonResponse = await response.json();
       if (!jsonResponse) {
         toast("No response returned.", "error");
       } else {
-        setContext(jsonResponse.context);
+        messageQueueStore._applyServerEpoch?.(jsonResponse);
+        if (jsonResponse.context) {
+          setContext(jsonResponse.context);
+        }
       }
     }
   } catch (e) {

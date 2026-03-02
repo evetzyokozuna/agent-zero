@@ -3,6 +3,7 @@ from python.helpers.api import ApiHandler, Request, Response
 
 from python.helpers import files, extension, message_queue as mq, session_epoch
 import os
+import json
 from python.helpers.security import safe_filename
 from python.helpers.defer import DeferredTask
 
@@ -63,7 +64,19 @@ class Message(ApiHandler):
         context = self.use_context(ctxid)
         stale_reason = session_epoch.stale_epoch_reason(context, request_epoch)
         if stale_reason:
-            return Response(stale_reason, status=409)
+            return Response(
+                response=json.dumps(
+                    {
+                        "ok": False,
+                        "code": "STALE_EPOCH_REJECTED",
+                        "error": stale_reason,
+                        "context": context.id,
+                        "epoch": session_epoch.get_epoch(context),
+                    }
+                ),
+                status=409,
+                mimetype="application/json",
+            )
 
         # call extension point, alow it to modify data
         data = { "message": message, "attachment_paths": attachment_paths }

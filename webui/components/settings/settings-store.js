@@ -28,6 +28,9 @@ const model = {
   settings: null,
   additional: null,
   workdirFileStructureTestOutput: "",
+  fineTuningApplyScope: "global",
+  fineTuningApplyProject: "",
+  fineTuningApplyProfile: "",
   
   // Tab state
   _activeTab: DEFAULT_TAB,
@@ -58,6 +61,7 @@ const model = {
       if (response && response.settings) {
         this.settings = response.settings;
         this.additional = response.additional || null;
+        this.fineTuningApplyProfile = this.settings.agent_profile || this.fineTuningApplyProfile || "agent0";
       } else {
         throw new Error("Invalid settings response");
       }
@@ -156,6 +160,26 @@ const model = {
     return Object.keys(this.envOverrides || {}).sort();
   },
 
+  get fineTuningScopeOptions() {
+    const opts = [
+      { value: "global", label: "Global (usr/settings.json)" },
+      { value: "profile", label: "Profile (usr/agents/<profile>/settings.json)" },
+      { value: "project", label: "Project (.a0proj/settings.json)" },
+      { value: "project_profile", label: "Project + Profile (.a0proj/agents/<profile>/settings.json)" },
+      { value: "env", label: "Environment lock (.env A0_SET_*)" },
+    ];
+    return opts;
+  },
+
+  get fineTuningScopeDescription() {
+    const scope = this.fineTuningApplyScope;
+    if (scope === "global") return "Applies to global settings.json (general baseline).";
+    if (scope === "profile") return "Applies to user profile settings.json (more specialized than global).";
+    if (scope === "project") return "Applies to active project settings.json (specialized per project).";
+    if (scope === "project_profile") return "Applies to active project+profile settings.json (most specialized non-env scope).";
+    return "Writes A0_SET_* lock value to .env (always highest precedence).";
+  },
+
   async persistSettingToEnv(key) {
     if (!this.settings || !(key in this.settings)) {
       toast(`Cannot persist unknown setting: ${key}`, "error");
@@ -180,6 +204,43 @@ const model = {
     } catch (e) {
       console.error("Failed to persist env override:", e);
       toast(`Failed to save ${key} to .env: ${e.message}`, "error");
+      return false;
+    } finally {
+      this.isLoading = false;
+    }
+  },
+
+  async persistSettingToScope(key, scope = null) {
+    if (!this.settings || !(key in this.settings)) {
+      toast(`Cannot persist unknown setting: ${key}`, "error");
+      return false;
+    }
+    const selectedScope = (scope || this.fineTuningApplyScope || "global").trim();
+    this.isLoading = true;
+    try {
+      const ctxid = globalThis.getContext?.() || "";
+      const payload = {
+        key,
+        value: this.settings[key],
+        scope: selectedScope,
+        profile: this.fineTuningApplyProfile || this.settings.agent_profile || "",
+        project: this.fineTuningApplyProject || "",
+        ctxid,
+      };
+      const response = await API.callJsonApi("settings_scope_override_set", payload);
+      if (response && response.settings) {
+        this.settings = response.settings;
+        this.additional = response.additional || this.additional;
+        toast(`Saved ${key} to ${selectedScope} scope`, "success");
+        document.dispatchEvent(
+          new CustomEvent("settings-updated", { detail: response.settings })
+        );
+        return true;
+      }
+      throw new Error("Invalid response while saving scoped override");
+    } catch (e) {
+      console.error("Failed to persist scoped override:", e);
+      toast(`Failed to save ${key} for scope ${selectedScope}: ${e.message}`, "error");
       return false;
     } finally {
       this.isLoading = false;

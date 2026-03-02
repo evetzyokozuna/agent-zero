@@ -2,7 +2,7 @@ from typing import Any
 from python.helpers.extension import Extension
 from python.helpers.mcp_handler import MCPConfig
 from agent import Agent, LoopData
-from python.helpers.settings import get_settings
+from python.helpers import settings
 from python.helpers import projects, skills
 
 
@@ -35,7 +35,20 @@ class SystemPrompt(Extension):
        
 
 def get_main_prompt(agent: Agent):
-    return agent.read_prompt("agent.system.main.md")
+    set = settings.get_effective_settings(agent) if agent else settings.get_settings()
+    execution_mode = str(set.get("agent_execution_mode", "tool_first")).strip().lower()
+    if execution_mode not in ("tool_first", "tool_first_fallback", "hybrid", "model_first"):
+        execution_mode = "tool_first"
+    return agent.read_prompt(
+        "agent.system.main.md",
+        execution_mode=execution_mode,
+        allow_plain_text_response=bool(
+            set.get("agent_execution_allow_plain_text_response", False)
+        ),
+        require_tool_for_risky_intents=bool(
+            set.get("agent_execution_require_tool_for_risky_intents", True)
+        ),
+    )
 
 
 def get_tools_prompt(agent: Agent):
@@ -65,7 +78,7 @@ def get_secrets_prompt(agent: Agent):
 
         secrets_manager = get_secrets_manager(agent.context)
         secrets = secrets_manager.get_secrets_for_prompt()
-        vars = get_settings()["variables"]
+        vars = settings.get_effective_settings(agent)["variables"]
         return agent.read_prompt("agent.system.secrets.md", secrets=secrets, vars=vars)
     except Exception as e:
         # If secrets module is not available or has issues, return empty string

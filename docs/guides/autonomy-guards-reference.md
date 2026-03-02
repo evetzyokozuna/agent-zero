@@ -1,6 +1,7 @@
 # Autonomy Guards Reference
 
 This guide is the guard-focused companion to `autonomy-knobs-reference.md`.
+Execution-routing architecture modes are documented separately in `execution-routing-modes.md`.
 
 It documents:
 
@@ -214,3 +215,4 @@ Operational note:
 - Fewer guards enabled -> more permissive behavior, higher chance of repeated retries and runtime drift.
 
 Use the Fine-Tuning panel to match strictness to workload profile.
+Use `execution-routing-modes.md` when tuning plain-text vs tool-route behavior.

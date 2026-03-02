@@ -12,6 +12,31 @@
             Structured controls for autonomy and execution knobs. These settings define how the agent behaves under long-running workloads.
           </div>
 
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Fine-Tuning apply target</div>
+              <div class="field-description">Choose where setting saves are persisted (general to specialized). .env is explicit lock scope and always wins.</div>
+            </div>
+            <div class="field-control">
+              <select x-model="$store.settings.fineTuningApplyScope">
+                <template x-for="opt in $store.settings.fineTuningScopeOptions" :key="opt.value">
+                  <option :value="opt.value" x-text="opt.label"></option>
+                </template>
+              </select>
+              <input
+                type="text"
+                placeholder="profile (optional override)"
+                x-model="$store.settings.fineTuningApplyProfile"
+                x-show="$store.settings.fineTuningApplyScope === 'profile' || $store.settings.fineTuningApplyScope === 'project_profile'" />
+              <input
+                type="text"
+                placeholder="project (optional, otherwise inferred from active context)"
+                x-model="$store.settings.fineTuningApplyProject"
+                x-show="$store.settings.fineTuningApplyScope === 'project' || $store.settings.fineTuningApplyScope === 'project_profile'" />
+              <div class="field-description" x-text="$store.settings.fineTuningScopeDescription"></div>
+            </div>
+          </div>
+
           <div class="env-override-panel" x-show="$store.settings.getEnvOverrideKeys().length > 0">
             <div class="env-override-title">Active .env Overrides Detected</div>
             <div class="env-override-description">
@@ -29,6 +54,112 @@
                 </button>
               </div>
             </template>
+          </div>
+
+          <div class="subsection-title">Execution Routing Modes (Opt-In)</div>
+          <div class="section-description">
+            Controls how the agent routes between plain responses and tool execution. Default keeps current Tool-First behavior. Hybrid and Model-First are opt-in and can be tightened with risky-intent tool routing.
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Execution mode</div>
+              <div class="field-description">`tool_first` (current), `tool_first_fallback`, `hybrid`, `model_first`. Default is strict backward-compatible Tool-First.</div>
+              <div class="field-description" x-show="$store.settings.isEnvOverridden('agent_execution_mode')">
+                <span class="env-badge">.env override active: <span x-text="$store.settings.getEnvOverrideValue('agent_execution_mode')"></span></span>
+              </div>
+            </div>
+            <div class="field-control">
+              <select x-model="$store.settings.settings.agent_execution_mode">
+                <option value="tool_first">tool_first (current architecture)</option>
+                <option value="tool_first_fallback">tool_first_fallback (strict + fallback after N misformats)</option>
+                <option value="hybrid">hybrid (plain text or tool call)</option>
+                <option value="model_first">model_first (plain text first, tool for execution)</option>
+              </select>
+              <button
+                class="button button-small"
+                @click="$store.settings.persistSettingToScope('agent_execution_mode')">
+                Save this value to selected target
+              </button>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Allow plain-text response path</div>
+              <div class="field-description">Master gate for accepting non-JSON responses in non-default routing modes. OFF preserves strict JSON-only behavior.</div>
+              <div class="field-description" x-show="$store.settings.isEnvOverridden('agent_execution_allow_plain_text_response')">
+                <span class="env-badge">.env override active: <span x-text="$store.settings.getEnvOverrideValue('agent_execution_allow_plain_text_response')"></span></span>
+              </div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.agent_execution_allow_plain_text_response" />
+                <span class="toggler"></span>
+              </label>
+              <button
+                class="button button-small"
+                @click="$store.settings.persistSettingToScope('agent_execution_allow_plain_text_response')">
+                Save this value to selected target
+              </button>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Require tool route for risky intents</div>
+              <div class="field-description">When enabled, risky/executable intents (writes, deletes, shell commands) must use a JSON tool call even in Hybrid or Model-First mode.</div>
+              <div class="field-description" x-show="$store.settings.isEnvOverridden('agent_execution_require_tool_for_risky_intents')">
+                <span class="env-badge">.env override active: <span x-text="$store.settings.getEnvOverrideValue('agent_execution_require_tool_for_risky_intents')"></span></span>
+              </div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.agent_execution_require_tool_for_risky_intents" />
+                <span class="toggler"></span>
+              </label>
+              <button
+                class="button button-small"
+                @click="$store.settings.persistSettingToScope('agent_execution_require_tool_for_risky_intents')">
+                Save this value to selected target
+              </button>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Tool-First fallback misformat threshold</div>
+              <div class="field-description">For `tool_first_fallback`, plain-text path activates after this many consecutive misformats.</div>
+              <div class="field-description" x-show="$store.settings.isEnvOverridden('agent_tool_first_fallback_after_misformats')">
+                <span class="env-badge">.env override active: <span x-text="$store.settings.getEnvOverrideValue('agent_tool_first_fallback_after_misformats')"></span></span>
+              </div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="1" step="1" x-model.number="$store.settings.settings.agent_tool_first_fallback_after_misformats" />
+              <button
+                class="button button-small"
+                @click="$store.settings.persistSettingToScope('agent_tool_first_fallback_after_misformats')">
+                Save this value to selected target
+              </button>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Risky-intent regex</div>
+              <div class="field-description">Regex used to classify requests as executable/risky for enforced tool routing.</div>
+              <div class="field-description" x-show="$store.settings.isEnvOverridden('agent_execution_risky_intent_regex')">
+                <span class="env-badge">.env override active: <span x-text="$store.settings.getEnvOverrideValue('agent_execution_risky_intent_regex')"></span></span>
+              </div>
+            </div>
+            <div class="field-control">
+              <input type="text" x-model="$store.settings.settings.agent_execution_risky_intent_regex" />
+              <button
+                class="button button-small"
+                @click="$store.settings.persistSettingToScope('agent_execution_risky_intent_regex')">
+                Save this value to selected target
+              </button>
+            </div>
           </div>
 
           <div class="subsection-title">Guard Switches (Adoption Controls)</div>

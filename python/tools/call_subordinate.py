@@ -11,7 +11,7 @@ class Delegation(Tool):
     DATA_NAME_SUB_CALLS = "_subordinate_calls_in_turn"
 
     async def execute(self, message="", reset="", **kwargs):
-        set = settings.get_settings()
+        set = settings.get_effective_settings(self.agent)
         guards_enabled = bool(set.get("subordinate_guardrails_enabled", False))
         current_depth = self._get_current_depth()
         next_depth = current_depth + 1

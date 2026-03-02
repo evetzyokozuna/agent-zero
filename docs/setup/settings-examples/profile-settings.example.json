@@ -1,0 +1,5 @@
+{
+  "agent_execution_mode": "hybrid",
+  "agent_execution_allow_plain_text_response": true,
+  "agent_execution_require_tool_for_risky_intents": true
+}

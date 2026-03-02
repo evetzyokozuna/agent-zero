@@ -14,6 +14,7 @@ The autonomy work introduces guardrails and budgets across the main failure-pron
 - Memory load guardrails (query/limit/response clamps)
 - History compression tuning controls (ratios + pass limits)
 - Runtime budgets (turn/task/subordinate caps)
+- Execution routing architecture modes (Tool-First/Tool-First fallback/Hybrid/Model-First)
 
 Guard switches are provided for staged adoption:
 
@@ -33,6 +34,7 @@ You can tune autonomy settings in three places:
 Guard-specific detail:
 
 - `autonomy-guards-reference.md` (what each guard does, risk when disabled)
+- `execution-routing-modes.md` (how plain-text vs tool routing is selected)
 
 ## Fine-Tuning panel
 
@@ -68,6 +70,29 @@ Settings precedence is:
 3. runtime defaults
 
 Implication: a normal UI save updates `settings.json`, but any key with an active `A0_SET_*` override will resolve back to the `.env` value when settings are read again. Use the explicit overwrite action in Fine-Tuning when you want a UI change to become the new `.env` source of truth.
+
+For full inheritance order across global/profile/project scopes, see `settings-precedence-hierarchy.md`.
+
+### Why Fine-Tuning differs from API keys/secrets
+
+Most Fine-Tuning/autonomy knobs are persisted in `settings.json` by design, while API keys and a few sensitive runtime fields are persisted via `.env`/secret paths.
+
+Rationale:
+
+- autonomy knobs are operational tuning values that may change frequently by environment
+- `.env` is treated as deployment-level override source (`A0_SET_*`) with highest precedence
+- secrets should avoid plain settings persistence and remain in secret-oriented storage paths
+
+To reduce friction around persistence scope, Fine-Tuning surfaces per-setting inline **Save this value to selected target** actions next to affected controls.
+Fine-Tuning also includes a top-level **apply target** selector so saves can target global, profile, project, project+profile, or explicit `.env` lock scope.
+
+### Execution routing defaults
+
+Execution routing modes are strictly opt-in:
+
+- default mode is `tool_first` (legacy strict JSON-tool contract)
+- no routing behavior changes occur unless new execution-mode knobs are explicitly enabled
+- risky-intent tool-route enforcement can stay enabled even in `hybrid` or `model_first`
 
 ### Tool payload spill is not chunking
 
@@ -110,5 +135,7 @@ From there:
 
 - Full setting-by-setting reference: `autonomy-knobs-reference.md`
 - Guard-by-guard reference: `autonomy-guards-reference.md`
+- Execution routing architecture and rollout: `execution-routing-modes.md`
+- Scope inheritance and lock semantics: `settings-precedence-hierarchy.md`
 - Validation and soak workflow: `autonomy-testing.md`
 - Ready-to-apply profile examples: `../setup/env-examples/`

@@ -1,4 +1,4 @@
-import asyncio, random, string, threading, time
+import asyncio, random, re, string, threading, time
 import hashlib
 import json
 import nest_asyncio
@@ -387,7 +387,7 @@ class Agent:
 
     async def monologue(self):
         error_retries = 0  # counter for critical error retries
-        set = settings.get_settings()
+        set = settings.get_effective_settings(self)
         monologue_started_at = time.monotonic()
         last_iteration_started_at: float | None = None
         consecutive_misformats = 0
@@ -518,7 +518,9 @@ class Agent:
                             # Append the assistant's response to the history
                             self.hist_add_ai_response(agent_response)
                             # process tools requested in agent message
-                            tools_result = await self.process_tools(agent_response)
+                            tools_result = await self.process_tools(
+                                agent_response, consecutive_misformats=consecutive_misformats
+                            )
                             if self.loop_data.params_temporary.get(
                                 "guardrail_misformat", False
                             ):
@@ -718,7 +720,7 @@ class Agent:
     async def retry_critical_exception(
         self, e: Exception, error_retries: int, delay: int = 3, max_retries: int = 1
     ) -> int:
-        set = settings.get_settings()
+        set = settings.get_effective_settings(self)
         if bool(set.get("agent_retry_split_by_error_class_enabled", False)):
             retry_class, class_max_retries, class_delay = self._classify_retry_policy(e, set)
             max_retries = class_max_retries
@@ -997,9 +999,10 @@ class Agent:
         while self.context.paused:
             await asyncio.sleep(0.1)
 
-    async def process_tools(self, msg: str):
+    async def process_tools(self, msg: str, consecutive_misformats: int = 0):
         self.loop_data.params_temporary["guardrail_misformat"] = False
-        set = settings.get_settings()
+        set = settings.get_effective_settings(self)
+        execution_mode = self._get_execution_mode(set)
         # search for tool usage requests in agent message
         tool_request = extract_tools.json_parse_dirty(msg)
 
@@ -1127,6 +1130,37 @@ class Agent:
                     type="warning", content=f"{self.agent_name}: {error_detail}"
                 )
         else:
+            if (
+                execution_mode in ("hybrid", "model_first")
+                and bool(set.get("agent_execution_allow_plain_text_response", False))
+                and bool(set.get("agent_execution_require_tool_for_risky_intents", True))
+                and self._is_risky_user_intent(set)
+            ):
+                mode_guard = (
+                    "[EXECUTION_MODE:TOOL_ROUTE_REQUIRED] "
+                    "This request appears executable/risky; emit a JSON tool call instead of plain text."
+                )
+                self.hist_add_warning(mode_guard)
+                PrintStyle(font_color="orange", padding=True).print(mode_guard)
+                self.context.log.log(
+                    type="warning",
+                    content=f"{self.agent_name}: {mode_guard}",
+                )
+            if self._should_accept_plain_text_response(
+                msg=msg,
+                execution_mode=execution_mode,
+                consecutive_misformats=consecutive_misformats,
+                set=set,
+            ):
+                notice = (
+                    f"[EXECUTION_MODE:{execution_mode.upper()}] "
+                    "Accepted plain-text response instead of requiring a tool envelope."
+                )
+                self.context.log.log(
+                    type="info",
+                    content=f"{self.agent_name}: {notice}",
+                )
+                return msg
             self.loop_data.params_temporary["guardrail_misformat"] = True
             warning_msg_misformat = self.read_prompt("fw.msg_misformat.md")
             self.hist_add_warning(warning_msg_misformat)
@@ -1136,8 +1170,91 @@ class Agent:
                 content=f"{self.agent_name}: Message misformat, no valid tool request found.",
             )
 
+    def _get_execution_mode(self, set: settings.Settings) -> str:
+        mode = str(set.get("agent_execution_mode", "tool_first")).strip().lower()
+        if mode not in ("tool_first", "tool_first_fallback", "hybrid", "model_first"):
+            return "tool_first"
+        return mode
+
+    def _should_accept_plain_text_response(
+        self,
+        msg: str,
+        execution_mode: str,
+        consecutive_misformats: int,
+        set: settings.Settings,
+    ) -> bool:
+        if not bool(set.get("agent_execution_allow_plain_text_response", False)):
+            return False
+        if not (msg or "").strip():
+            return False
+
+        if execution_mode == "tool_first":
+            return False
+
+        if execution_mode == "tool_first_fallback":
+            threshold = int(set.get("agent_tool_first_fallback_after_misformats", 2))
+            if threshold < 1:
+                threshold = 1
+            return (consecutive_misformats + 1) >= threshold
+
+        if execution_mode in ("hybrid", "model_first"):
+            if (
+                bool(set.get("agent_execution_require_tool_for_risky_intents", True))
+                and self._is_risky_user_intent(set)
+            ):
+                return False
+            return True
+
+        return False
+
+    def _is_risky_user_intent(self, set: settings.Settings) -> bool:
+        text = self._latest_user_message_text().lower()
+        if not text:
+            return False
+        pattern = str(set.get("agent_execution_risky_intent_regex", "")).strip()
+        if not pattern:
+            return False
+        try:
+            return re.search(pattern, text, flags=re.IGNORECASE) is not None
+        except re.error:
+            # Fail safe: if regex is invalid, rely on static keyword fallback.
+            return any(
+                token in text
+                for token in (
+                    "write ",
+                    "edit ",
+                    "modify ",
+                    "update ",
+                    "create file",
+                    "delete ",
+                    "remove ",
+                    "run ",
+                    "execute ",
+                    "terminal",
+                    "shell",
+                    "command",
+                )
+            )
+
+    def _latest_user_message_text(self) -> str:
+        msg = self.last_user_message
+        if not msg:
+            return ""
+        content = getattr(msg, "content", "")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, dict):
+            candidate = content.get("user_message")
+            if isinstance(candidate, str):
+                return candidate
+            raw = content.get("raw_content")
+            if isinstance(raw, str):
+                return raw
+            return json.dumps(content, ensure_ascii=True)
+        return str(content)
+
     def _check_hard_stop_tool_response(self, tool_name: str, tool_result: str) -> str | None:
-        set = settings.get_settings()
+        set = settings.get_effective_settings(self)
         if not bool(set.get("agent_guard_context_hard_stop_enabled", False)):
             return None
         text = (tool_result or "").lower()
@@ -1416,7 +1533,7 @@ class Agent:
                 "[TOOL_PREFLIGHT:INVALID_RUNTIME] code_execution_tool requires a valid `runtime` "
                 f"({sorted(valid_runtimes)}). Got {runtime_name!r}."
             )
-        workdir = str(settings.get_settings().get("workdir_path", "")).strip()
+        workdir = str(settings.get_effective_settings(self).get("workdir_path", "")).strip()
         if not workdir:
             return (
                 "[TOOL_PREFLIGHT:MISSING_WORKSPACE_ROOT] workdir_path is empty; "

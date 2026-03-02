@@ -2,6 +2,8 @@
 
 This guide provides a repeatable validation flow for autonomy guardrails and knobs.
 
+For CI tiering and automation strategy, see `testing-ci-tiering-proposal.md`.
+
 ## Test layers
 
 1. Smoke validation
@@ -139,6 +141,27 @@ Set small turn/task/subordinate budgets.
 Expected:
 
 - deterministic budget-triggered exits
+
+### B10. Execution routing modes
+
+Use one mode at a time and test both informational and executable prompts:
+
+- `agent_execution_mode=tool_first` with `agent_execution_allow_plain_text_response=false`
+- `agent_execution_mode=tool_first_fallback` with fallback threshold set low (e.g. `2`)
+- `agent_execution_mode=hybrid` with plain-text enabled
+- `agent_execution_mode=model_first` with plain-text enabled
+
+For `hybrid` and `model_first`, run two subcases:
+
+- `agent_execution_require_tool_for_risky_intents=true`
+- `agent_execution_require_tool_for_risky_intents=false` (test-only)
+
+Expected:
+
+- default mode remains strict JSON/tool behavior
+- informational asks can complete in plain text only when mode/toggles allow
+- risky/executable asks are forced to tool route when risky-intent enforcement is enabled
+- `tool_first_fallback` exits repeated misformat loops after threshold instead of spiraling indefinitely
 
 ---
 

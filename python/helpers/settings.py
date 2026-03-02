@@ -110,6 +110,11 @@ class Settings(TypedDict):
     agent_tool_call_ceiling_per_turn: int
     agent_guardrail_hits_ceiling_per_minute: int
     agent_missing_context_errors_ceiling_per_turn: int
+    agent_execution_mode: str
+    agent_execution_allow_plain_text_response: bool
+    agent_execution_require_tool_for_risky_intents: bool
+    agent_tool_first_fallback_after_misformats: int
+    agent_execution_risky_intent_regex: str
     tool_args_max_chars: int
     tool_args_spill_threshold_chars: int
     tool_args_spill_dir: str
@@ -474,6 +479,86 @@ def merge_settings(original: Settings, delta: dict) -> Settings:
     return merged
 
 
+def _read_settings_json_file(path: str) -> dict[str, Any]:
+    if not path or (not os.path.exists(path)):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            parsed = json.load(f)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        return {}
+    return {}
+
+
+def _write_settings_json_file(path: str, data: dict[str, Any]) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=True)
+        f.write("\n")
+
+
+def get_effective_settings(agent: Any | None = None) -> Settings:
+    """
+    Resolve runtime settings for an agent scope with explicit layering.
+
+    Layer order (general -> specialized), before env lock:
+    1) defaults + global usr/settings.json
+    2) built-in profile settings.json
+    3) user profile settings.json
+    4) project settings.json
+    5) project profile settings.json
+
+    Final lock layer:
+    6) .env A0_SET_* overrides
+    """
+    base = _read_settings_file() or get_default_settings()
+    resolved = normalize_settings(base)
+
+    if agent and getattr(agent, "config", None):
+        try:
+            from python.helpers import projects
+
+            profile_name = str(getattr(agent.config, "profile", "") or "").strip()
+            project_name = (
+                str(projects.get_context_project_name(agent.context) or "").strip()
+                if getattr(agent, "context", None)
+                else ""
+            )
+            layered_paths: list[str] = []
+            if profile_name:
+                layered_paths.append(files.get_abs_path("agents", profile_name, "settings.json"))
+                layered_paths.append(files.get_abs_path("usr", "agents", profile_name, "settings.json"))
+            if project_name:
+                layered_paths.append(
+                    files.get_abs_path(projects.get_project_meta_folder(project_name, "settings.json"))
+                )
+                if profile_name:
+                    layered_paths.append(
+                        files.get_abs_path(
+                            projects.get_project_meta_folder(
+                                project_name, "agents", profile_name, "settings.json"
+                            )
+                        )
+                    )
+
+            layered_data: dict[str, Any] = {}
+            for path in layered_paths:
+                override = _read_settings_json_file(path)
+                if override:
+                    layered_data.update(override)
+            if layered_data:
+                resolved = normalize_settings(merge_settings(resolved, layered_data))
+        except Exception:
+            pass
+
+    # Deployment lock layer (A0_SET_*) always wins unless removed.
+    resolved = normalize_settings(_apply_env_overrides(resolved))
+    _load_sensitive_settings(resolved)
+    return resolved
+
+
 def normalize_settings(settings: Settings) -> Settings:
     copy = settings.copy()
     default = get_default_settings()
@@ -568,6 +653,71 @@ def save_env_override(key: str, value: Any) -> Settings:
     serialized = _serialize_setting_value_for_env(coerced, default_value)
     dotenv.save_dotenv_value(f"A0_SET_{key}", serialized)
     return reload_settings()
+
+
+def save_scope_override(
+    key: str,
+    value: Any,
+    scope: str,
+    profile: str | None = None,
+    project: str | None = None,
+) -> Settings:
+    defaults = get_default_settings()
+    if key not in defaults:
+        raise ValueError(f"Unknown setting key: {key}")
+
+    scope_norm = str(scope or "").strip().lower()
+    default_value = defaults[key]
+    coerced = _coerce_setting_value_for_type(key, value, default_value)
+
+    if scope_norm == "env":
+        return save_env_override(key=key, value=coerced)
+
+    if scope_norm == "global":
+        global_current = _read_settings_file() or get_default_settings()
+        updated = merge_settings(global_current, {key: coerced})
+        return set_settings(updated)
+
+    if scope_norm == "profile":
+        profile_name = str(profile or "").strip()
+        if not profile_name:
+            raise ValueError("Profile scope requires `profile`.")
+        path = files.get_abs_path("usr", "agents", profile_name, "settings.json")
+        data = _read_settings_json_file(path)
+        data[key] = coerced
+        _write_settings_json_file(path, data)
+        return reload_settings()
+
+    if scope_norm == "project":
+        from python.helpers import projects
+
+        project_name = str(project or "").strip()
+        if not project_name:
+            raise ValueError("Project scope requires `project`.")
+        path = files.get_abs_path(projects.get_project_meta_folder(project_name, "settings.json"))
+        data = _read_settings_json_file(path)
+        data[key] = coerced
+        _write_settings_json_file(path, data)
+        return reload_settings()
+
+    if scope_norm == "project_profile":
+        from python.helpers import projects
+
+        project_name = str(project or "").strip()
+        profile_name = str(profile or "").strip()
+        if not project_name or not profile_name:
+            raise ValueError("Project-profile scope requires both `project` and `profile`.")
+        path = files.get_abs_path(
+            projects.get_project_meta_folder(project_name, "agents", profile_name, "settings.json")
+        )
+        data = _read_settings_json_file(path)
+        data[key] = coerced
+        _write_settings_json_file(path, data)
+        return reload_settings()
+
+    raise ValueError(
+        "Unknown scope. Expected one of: global, profile, project, project_profile, env."
+    )
 
 
 def _adjust_to_version(settings: Settings, default: Settings):
@@ -727,6 +877,21 @@ def get_default_settings() -> Settings:
         agent_tool_call_ceiling_per_turn=get_default_value("agent_tool_call_ceiling_per_turn", 30),
         agent_guardrail_hits_ceiling_per_minute=get_default_value("agent_guardrail_hits_ceiling_per_minute", 8),
         agent_missing_context_errors_ceiling_per_turn=get_default_value("agent_missing_context_errors_ceiling_per_turn", 1),
+        # Execution routing architecture defaults to strict backward-compatible behavior.
+        agent_execution_mode=get_default_value("agent_execution_mode", "tool_first"),
+        agent_execution_allow_plain_text_response=get_default_value(
+            "agent_execution_allow_plain_text_response", False
+        ),
+        agent_execution_require_tool_for_risky_intents=get_default_value(
+            "agent_execution_require_tool_for_risky_intents", True
+        ),
+        agent_tool_first_fallback_after_misformats=get_default_value(
+            "agent_tool_first_fallback_after_misformats", 2
+        ),
+        agent_execution_risky_intent_regex=get_default_value(
+            "agent_execution_risky_intent_regex",
+            r"\b(write|edit|modify|update|create\s+file|delete|remove|run|execute|terminal|shell|command)\b",
+        ),
         tool_args_max_chars=get_default_value("tool_args_max_chars", 120000),
         tool_args_spill_threshold_chars=get_default_value("tool_args_spill_threshold_chars", 20000),
         tool_args_spill_dir=get_default_value("tool_args_spill_dir", "usr/tmp/tool_args"),
