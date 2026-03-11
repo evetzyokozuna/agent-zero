@@ -175,11 +175,11 @@ class CodeExecution(Tool):
                     PrintStyle.warning(repetitive_msg)
                     response = self.agent.read_prompt("fw.code.info.md", info=repetitive_msg)
                     return Response(message=response, break_loop=repetitive_break)
-            if bool(set.get("code_exec_guard_simple_cat_direct_read_enabled", False)):
-                cat_path = self._extract_simple_cat_path(code)
-                if cat_path:
-                    response, break_loop = await self.execute_file_read(path=cat_path)
-                    return Response(message=response, break_loop=break_loop)
+            cat_path = self._extract_simple_cat_path(code)
+            if cat_path:
+                response, _break_loop = await self.execute_file_read(path=cat_path)
+                # Always route simple direct `cat <path>` to deterministic file-read handling.
+                return Response(message=response, break_loop=True)
             response = await self.execute_terminal_command(
                 command=code, session=session, reset=reset
             )
@@ -1322,10 +1322,24 @@ class CodeExecution(Tool):
 
     def _extract_simple_cat_path(self, command: str) -> str | None:
         normalized = " ".join(command.split()).strip()
-        m = re.match(r"^cat\s+([^\s|;&<>]+)$", normalized)
-        if not m:
+        if not normalized.startswith("cat "):
             return None
-        return m.group(1)
+        rest = normalized[4:].strip()
+        if not rest:
+            return None
+        if any(tok in rest for tok in ("|", ";", "&", "<", ">")):
+            return None
+        if rest.startswith("-"):
+            return None
+        if (rest.startswith('"') and rest.endswith('"')) or (
+            rest.startswith("'") and rest.endswith("'")
+        ):
+            if len(rest) < 2:
+                return None
+            return rest[1:-1]
+        if " " in rest:
+            return None
+        return rest
 
     def _strip_runtime_noise_lines(self, output: str) -> str:
         noise_markers = (

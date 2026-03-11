@@ -21,6 +21,15 @@ function toast(text, type = "info", timeout = 5000) {
   notificationStore.addFrontendToastOnly(type, text, "", timeout / 1000);
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 // Settings Store
 const model = {
   // State
@@ -138,10 +147,10 @@ const model = {
 
     const pendingSummary = this.buildPendingFineTuningSummary();
     if (pendingSummary.length > 0) {
-      const summaryHtml = pendingSummary.map((line) => `- ${line}`).join("<br>");
+      const summaryHtml = this.buildPendingFineTuningSummaryHtml();
       const proceed = await showConfirmDialog({
         title: "Apply pending Fine-Tuning changes?",
-        message: `Pending changes:<br>${summaryHtml}<br><br>Continue?`,
+        message: `${summaryHtml}<br><br>Continue?`,
         confirmText: "Continue",
         cancelText: "Cancel",
         type: "warning",
@@ -326,6 +335,15 @@ const model = {
     return match ? match[1] : "";
   },
 
+  getXModelExpression(control) {
+    if (!control || typeof control.getAttributeNames !== "function") return "";
+    const attrName = control
+      .getAttributeNames()
+      .find((name) => name === "x-model" || name.startsWith("x-model."));
+    if (!attrName) return "";
+    return control.getAttribute(attrName) || "";
+  },
+
   scheduleFineTuningDecorators() {
     setTimeout(() => this.refreshFineTuningFieldDecorators(), 0);
   },
@@ -376,21 +394,19 @@ const model = {
   refreshFineTuningFieldDecorators() {
     const root = document.querySelector("[data-fine-tuning-root]");
     if (!root) return;
-    const controls = root.querySelectorAll("[x-model]");
+    const controls = root.querySelectorAll("input, select, textarea");
     controls.forEach((control) => {
-      const key = this.extractSettingKeyFromModel(control.getAttribute("x-model"));
+      const key = this.extractSettingKeyFromModel(this.getXModelExpression(control));
       if (!key || !this.settings || !(key in this.settings)) return;
       const editState = this.getSettingEditState(key);
+      const meta = this.getSettingSourceMeta(key);
+      const selected = this.parseFineTuningTargetValue(this.fineTuningApplyTargetValue);
       if (control.matches("input,select,textarea")) {
         control.disabled = !!editState.readonly;
       }
       const fieldControl = control.closest(".field-control");
       if (!fieldControl) return;
       const existing = fieldControl.querySelector(`.setting-source-row[data-setting-key="${key}"]`);
-      if (editState.state === "editable") {
-        existing?.remove();
-        return;
-      }
       let row = existing;
       if (!row) {
         row = document.createElement("div");
@@ -402,10 +418,26 @@ const model = {
         `;
         fieldControl.appendChild(row);
       }
-      row.querySelector(".setting-source-text").textContent = editState.label || "";
+      let baseLabel = editState.label || "";
+      if (editState.state === "editable") {
+        if (meta.source === "default") {
+          baseLabel = "using defaults";
+        } else if (meta.source === selected.scope) {
+          baseLabel = `set in ${meta.source_label}`;
+        } else {
+          baseLabel = `source: ${meta.source_label}`;
+        }
+      }
+      row.querySelector(".setting-source-text").textContent = baseLabel;
       const actionBtn = row.querySelector(".setting-source-link");
-      actionBtn.textContent = editState.state === "locked" ? "unlock" : "override";
-      actionBtn.onclick = () => this.handleSettingStateAction(key, editState.state);
+      if (editState.state === "editable") {
+        actionBtn.style.display = "none";
+        actionBtn.onclick = null;
+      } else {
+        actionBtn.style.display = "";
+        actionBtn.textContent = editState.state === "locked" ? "unlock" : "override";
+        actionBtn.onclick = () => this.handleSettingStateAction(key, editState.state);
+      }
     });
   },
 
@@ -427,6 +459,65 @@ const model = {
       lines.push(`override ${key} in ${scope}${project}${profile}`);
     }
     return lines;
+  },
+
+  buildPendingFineTuningSummaryHtml() {
+    const rows = [];
+    const envActions = this.fineTuningPendingEnvActions || {};
+    for (const [key, action] of Object.entries(envActions)) {
+      if (action?.mode === "remove_set_global") {
+        rows.push({
+          action: "Unlock .env + set Global",
+          setting: key,
+          target: `Remove A0_SET_${key} and persist to Global Settings`,
+        });
+      } else {
+        rows.push({
+          action: "Unlock .env",
+          setting: key,
+          target: `Remove A0_SET_${key} from .env`,
+        });
+      }
+    }
+    for (const [key, target] of Object.entries(this.fineTuningPendingOverrides || {})) {
+      if (envActions[key]?.mode === "remove_set_global") continue;
+      const scope = target?.scope || "global";
+      const profile = target?.profile ? `/${target.profile}` : "";
+      const project = target?.project ? `/${target.project}` : "";
+      rows.push({
+        action: "Override",
+        setting: key,
+        target: `Write to ${scope}${project}${profile}`,
+      });
+    }
+
+    const rowHtml = rows
+      .map(
+        (row) => `
+          <tr>
+            <td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.08);white-space:nowrap;">${escapeHtml(row.action)}</td>
+            <td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.08);font-family:monospace;">${escapeHtml(row.setting)}</td>
+            <td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.08);">${escapeHtml(row.target)}</td>
+          </tr>
+        `
+      )
+      .join("");
+
+    return `
+      <div style="margin-bottom:10px;">Pending changes:</div>
+      <div style="max-height:260px;overflow:auto;border:1px solid rgba(255,255,255,0.12);border-radius:8px;">
+        <table style="width:100%;border-collapse:collapse;font-size:0.92em;">
+          <thead style="position:sticky;top:0;background:var(--bg-color,#111);z-index:1;">
+            <tr>
+              <th style="text-align:left;padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.2);">Action</th>
+              <th style="text-align:left;padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.2);">Setting</th>
+              <th style="text-align:left;padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.2);">Target</th>
+            </tr>
+          </thead>
+          <tbody>${rowHtml}</tbody>
+        </table>
+      </div>
+    `;
   },
 
   async applyPendingFineTuningChanges(stagedValues = {}) {

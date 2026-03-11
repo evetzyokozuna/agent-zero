@@ -119,6 +119,65 @@
             </div>
           </div>
 
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Enable debug mode (LLM streams + traces)</div>
+              <div class="field-description">
+                When ON, model reasoning/response streams are printed to Docker logs and optional full request/response trace capture can be enabled below.
+              </div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.agent_debug_mode_enabled" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">Capture full LLM request/response traces</div>
+              <div class="field-description">
+                Writes per-turn JSON traces with prompt/messages/reasoning/response for deep inspection. Requires debug mode ON.
+              </div>
+            </div>
+            <div class="field-control">
+              <label class="toggle">
+                <input type="checkbox" x-model="$store.settings.settings.agent_debug_capture_full_llm_exchange" />
+                <span class="toggler"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">LLM trace directory</div>
+              <div class="field-description">
+                Relative path where debug trace files are written (default: <code>logs/llm_debug</code>).
+              </div>
+              <template x-if="$store.settings.additional?.runtime_settings?.agent_debug_capture_dir_abs">
+                <div class="field-description">
+                  Resolved path: <code x-text="$store.settings.additional.runtime_settings.agent_debug_capture_dir_abs"></code>
+                </div>
+              </template>
+            </div>
+            <div class="field-control">
+              <input type="text" x-model="$store.settings.settings.agent_debug_capture_dir" />
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label">
+              <div class="field-title">LLM trace max chars per field</div>
+              <div class="field-description">
+                Truncation cap for large prompt/response fields in debug trace JSON (default: 400000).
+              </div>
+            </div>
+            <div class="field-control">
+              <input type="number" min="1000" step="1000" x-model.number="$store.settings.settings.agent_debug_capture_max_chars" />
+            </div>
+          </div>
+
           <template x-if="!$store.settings.additional?.is_dockerized">
             <div>
               <div class="section-title">Testing</div>

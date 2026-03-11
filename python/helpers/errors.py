@@ -75,6 +75,50 @@ def format_error(e: Exception, start_entries=20, end_entries=15, error_message_p
     return result
 
 
+def user_facing_error_message(e: Exception, detailed_error: str | None = None) -> str:
+    text = (detailed_error or "").strip() or format_error(e)
+    lower = text.lower()
+
+    quota_markers = (
+        "openrouterexception",
+        "requires more credits",
+        "\"code\":402",
+        "insufficient credits",
+        "payment required",
+    )
+    if any(marker in lower for marker in quota_markers):
+        return (
+            "The model provider rejected this request due to credit/quota limits. "
+            "Please top up provider credits or use a model/provider with available quota, "
+            "then retry."
+        )
+
+    token_markers = (
+        "max_tokens",
+        "maximum context length",
+        "context length exceeded",
+        "too many tokens",
+    )
+    if any(marker in lower for marker in token_markers):
+        return (
+            "This request exceeded the model token/context limit. "
+            "Try a shorter prompt, reduce attachments/context, or select a model with a larger context window."
+        )
+
+    rate_limit_markers = (
+        "rate limit",
+        "\"code\":429",
+        "too many requests",
+    )
+    if any(marker in lower for marker in rate_limit_markers):
+        return (
+            "The provider is rate-limiting requests right now. "
+            "Please wait briefly and retry."
+        )
+
+    return error_text(e) or "An unexpected error occurred."
+
+
 class RepairableException(Exception):
     """An exception type indicating errors that can be surfaced to the LLM for potential self-repair."""
     pass

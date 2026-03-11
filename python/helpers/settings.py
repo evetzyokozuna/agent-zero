@@ -210,6 +210,10 @@ class Settings(TypedDict):
     shell_interface: Literal['local','ssh']
     websocket_server_restart_enabled: bool
     uvicorn_access_logs_enabled: bool
+    agent_debug_mode_enabled: bool
+    agent_debug_capture_full_llm_exchange: bool
+    agent_debug_capture_dir: str
+    agent_debug_capture_max_chars: int
 
     stt_model_size: str
     stt_language: str
@@ -353,6 +357,14 @@ def convert_out(settings: Settings) -> SettingsOutput:
             runtime_settings.get(
                 "uvicorn_access_logs_enabled",
                 default_settings["uvicorn_access_logs_enabled"],
+            )
+        ),
+        "agent_debug_capture_dir_abs": files.get_abs_path(
+            str(
+                runtime_settings.get(
+                    "agent_debug_capture_dir",
+                    default_settings.get("agent_debug_capture_dir", "logs/llm_debug"),
+                )
             )
         ),
         "env_overrides": get_env_overrides(list(current.keys())),
@@ -932,9 +944,16 @@ def save_scope_override(
         return save_env_override(key=key, value=coerced)
 
     if scope_norm == "global":
-        global_current = _read_settings_file() or get_default_settings()
-        updated = merge_settings(global_current, {key: coerced})
-        return set_settings(updated)
+        # IMPORTANT: Scoped global overrides should update only the target key in
+        # usr/settings.json and must not route through set_settings(), which also
+        # persists sensitive fields (auth/root passwords) and can trigger side effects.
+        global_data = _read_settings_json_file(SETTINGS_FILE)
+        global_data[key] = coerced
+        _write_settings_json_file(SETTINGS_FILE, global_data)
+        previous = _settings
+        reloaded = reload_settings()
+        _apply_settings(previous)
+        return reloaded
 
     if scope_norm == "profile":
         profile_name = str(profile or "").strip()
@@ -1221,6 +1240,10 @@ def get_default_settings() -> Settings:
         shell_interface=get_default_value("shell_interface", "local" if runtime.is_dockerized() else "ssh"),
         websocket_server_restart_enabled=get_default_value("websocket_server_restart_enabled", True),
         uvicorn_access_logs_enabled=get_default_value("uvicorn_access_logs_enabled", False),
+        agent_debug_mode_enabled=get_default_value("agent_debug_mode_enabled", False),
+        agent_debug_capture_full_llm_exchange=get_default_value("agent_debug_capture_full_llm_exchange", False),
+        agent_debug_capture_dir=get_default_value("agent_debug_capture_dir", "logs/llm_debug"),
+        agent_debug_capture_max_chars=get_default_value("agent_debug_capture_max_chars", 400000),
         stt_model_size=get_default_value("stt_model_size", "base"),
         stt_language=get_default_value("stt_language", "en"),
         stt_silence_threshold=get_default_value("stt_silence_threshold", 0.3),

@@ -369,13 +369,17 @@ export async function applySnapshot(snapshot, options = {}) {
     lastLogGuid = snapshot.log_guid;
   }
 
-  if (lastLogVersion != snapshot.log_version) {
+  const incomingLogVersion = Number(snapshot.log_version || 0);
+  if (incomingLogVersion > lastLogVersion) {
     updated = true;
     setMessages(snapshot.logs);
     afterMessagesUpdate(snapshot.logs);
+    lastLogVersion = incomingLogVersion;
+  } else if (incomingLogVersion < lastLogVersion) {
+    // Ignore stale snapshots (poll/websocket race) so older chunks cannot
+    // overwrite already-rendered newer response content.
   }
 
-  lastLogVersion = snapshot.log_version;
   lastLogGuid = snapshot.log_guid;
 
   updateProgress(snapshot.log_progress, snapshot.log_progress_active);

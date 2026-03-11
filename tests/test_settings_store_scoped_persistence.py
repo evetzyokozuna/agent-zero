@@ -20,3 +20,5 @@ def test_settings_store_exposes_scoped_persistence_api() -> None:
     assert "fineTuningApplyScope" in content
     assert 'API.callJsonApi("settings_fine_tuning_state_get"' in content
     assert 'API.callJsonApi("settings_env_override_unset"' in content
+    assert "getXModelExpression" in content
+    assert 'name.startsWith("x-model.")' in content

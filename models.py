@@ -311,6 +311,7 @@ class LiteLLMChatWrapper(SimpleChatModel):
         super().__init__(model_name=model_value, provider=provider, kwargs=kwargs)  # type: ignore
         # Set A0 model config as instance attribute after parent init
         self.a0_model_conf = model_config
+        self._last_call_diagnostics: dict[str, Any] = {}
 
     @property
     def _llm_type(self) -> str:
@@ -501,12 +502,17 @@ class LiteLLMChatWrapper(SimpleChatModel):
         retry_delay_s: float = float(call_kwargs.pop("a0_retry_delay_seconds", 1.5))
         stream = reasoning_callback is not None or response_callback is not None or tokens_callback is not None
 
-        # results
-        result = ChatGenerationResult()
-
         attempt = 0
         while True:
             got_any_chunk = False
+            result = ChatGenerationResult()
+            diagnostics = {
+                "chunk_count": 0,
+                "noncontent_chunk_count": 0,
+                "tool_call_chunk_count": 0,
+                "function_call_chunk_count": 0,
+                "finish_reasons": {},
+            }
             try:
                 # call model
                 _completion = await acompletion(
@@ -520,6 +526,7 @@ class LiteLLMChatWrapper(SimpleChatModel):
                     # iterate over chunks
                     async for chunk in _completion:  # type: ignore
                         got_any_chunk = True
+                        _accumulate_chunk_diagnostics(diagnostics, chunk)
                         # parse chunk
                         parsed = _parse_chunk(chunk)
                         output = result.add_chunk(parsed)
@@ -551,6 +558,7 @@ class LiteLLMChatWrapper(SimpleChatModel):
 
                 # non-stream response
                 else:
+                    _accumulate_chunk_diagnostics(diagnostics, _completion)
                     parsed = _parse_chunk(_completion)
                     output = result.add_chunk(parsed)
                     if limiter:
@@ -560,6 +568,9 @@ class LiteLLMChatWrapper(SimpleChatModel):
                             limiter.add(output=approximate_tokens(output["reasoning_delta"]))
 
                 # Successful completion of stream
+                diagnostics["response_length"] = len(result.response or "")
+                diagnostics["reasoning_length"] = len(result.reasoning or "")
+                self._last_call_diagnostics = diagnostics
                 return result.response, result.reasoning
 
             except Exception as e:
@@ -835,6 +846,66 @@ def _parse_chunk(chunk: Any) -> ChatChunk:
     ) or ""
 
     return ChatChunk(reasoning_delta=reasoning_delta, response_delta=response_delta)
+
+
+def _chunk_choice(chunk: Any) -> Any:
+    try:
+        choices = chunk.get("choices", [])
+    except Exception:
+        choices = getattr(chunk, "choices", [])
+    if not choices:
+        return {}
+    first = choices[0]
+    if isinstance(first, dict):
+        return first
+    try:
+        return dict(first)
+    except Exception:
+        return first
+
+
+def _accumulate_chunk_diagnostics(diag: dict[str, Any], chunk: Any) -> None:
+    choice = _chunk_choice(chunk)
+    diag["chunk_count"] = int(diag.get("chunk_count", 0)) + 1
+
+    delta = choice.get("delta", {}) if isinstance(choice, dict) else getattr(choice, "delta", {})
+    message = (
+        choice.get("message", {})
+        if isinstance(choice, dict)
+        else getattr(choice, "message", {})
+    )
+    model_extra = (
+        choice.get("model_extra", {})
+        if isinstance(choice, dict)
+        else getattr(choice, "model_extra", {})
+    )
+    if not message and isinstance(model_extra, dict):
+        message = model_extra.get("message", {})
+
+    def _get(obj: Any, key: str, default: Any = None) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    content = _get(delta, "content", "") or _get(message, "content", "")
+    tool_calls = _get(delta, "tool_calls", None) or _get(message, "tool_calls", None)
+    function_call = _get(delta, "function_call", None) or _get(message, "function_call", None)
+    finish_reason = _get(choice, "finish_reason", None)
+
+    if tool_calls:
+        diag["tool_call_chunk_count"] = int(diag.get("tool_call_chunk_count", 0)) + 1
+    if function_call:
+        diag["function_call_chunk_count"] = int(diag.get("function_call_chunk_count", 0)) + 1
+    if not content and (tool_calls or function_call):
+        diag["noncontent_chunk_count"] = int(diag.get("noncontent_chunk_count", 0)) + 1
+    if finish_reason:
+        fr_map = diag.get("finish_reasons", {})
+        if not isinstance(fr_map, dict):
+            fr_map = {}
+        fr_map[str(finish_reason)] = int(fr_map.get(str(finish_reason), 0)) + 1
+        diag["finish_reasons"] = fr_map
+
+
 
 
 

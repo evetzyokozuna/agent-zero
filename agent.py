@@ -445,10 +445,18 @@ class Agent:
                         )
                         await self.handle_intervention()
 
+                        debug_stream_to_console = self._debug_stream_to_console(set)
+                        debug_capture_trace = self._debug_capture_enabled(set)
+                        debug_trace_payload = (
+                            self._build_llm_debug_trace_payload(prompt=prompt)
+                            if debug_capture_trace
+                            else None
+                        )
+
 
                         async def reasoning_callback(chunk: str, full: str):
                             await self.handle_intervention()
-                            if chunk == full:
+                            if debug_stream_to_console and chunk == full:
                                 printer.print("Reasoning: ")  # start of reasoning
                             # Pass chunk and full data to extensions for processing
                             stream_data = {"chunk": chunk, "full": full}
@@ -458,7 +466,7 @@ class Agent:
                                 stream_data=stream_data,
                             )
                             # Stream masked chunk after extensions processed it
-                            if stream_data.get("chunk"):
+                            if debug_stream_to_console and stream_data.get("chunk"):
                                 printer.stream(stream_data["chunk"])
                             # Use the potentially modified full text for downstream processing
                             await self.handle_reasoning_stream(stream_data["full"])
@@ -466,7 +474,7 @@ class Agent:
                         async def stream_callback(chunk: str, full: str):
                             await self.handle_intervention()
                             # output the agent response stream
-                            if chunk == full:
+                            if debug_stream_to_console and chunk == full:
                                 printer.print("Response: ")  # start of response
                             # Pass chunk and full data to extensions for processing
                             stream_data = {"chunk": chunk, "full": full}
@@ -476,7 +484,7 @@ class Agent:
                                 stream_data=stream_data,
                             )
                             # Stream masked chunk after extensions processed it
-                            if stream_data.get("chunk"):
+                            if debug_stream_to_console and stream_data.get("chunk"):
                                 printer.stream(stream_data["chunk"])
                             # Use the potentially modified full text for downstream processing
                             await self.handle_response_stream(stream_data["full"])
@@ -487,6 +495,42 @@ class Agent:
                             response_callback=stream_callback,
                             reasoning_callback=reasoning_callback,
                         )
+                        if not (agent_response or "").strip():
+                            diag = self.loop_data.params_temporary.get(
+                                "last_model_call_diagnostics", {}
+                            )
+                            diag_suffix = ""
+                            if isinstance(diag, dict):
+                                noncontent = int(diag.get("noncontent_chunk_count", 0) or 0)
+                                tool_chunks = int(diag.get("tool_call_chunk_count", 0) or 0)
+                                fn_chunks = int(diag.get("function_call_chunk_count", 0) or 0)
+                                finish_reasons = diag.get("finish_reasons", {})
+                                diag_suffix = (
+                                    f" diagnostics="
+                                    f"chunks:{int(diag.get('chunk_count', 0) or 0)},"
+                                    f"noncontent:{noncontent},"
+                                    f"tool_calls:{tool_chunks},"
+                                    f"function_calls:{fn_chunks},"
+                                    f"finish:{finish_reasons}"
+                                )
+                            empty_msg = (
+                                "[MODEL_EMPTY_OUTPUT] Chat model returned an empty response. "
+                                "This often indicates provider-side refusal/rate/quota pressure, "
+                                "or an over-constrained context. Will treat as misformat."
+                                f"{diag_suffix}"
+                            )
+                            self.hist_add_warning(empty_msg)
+                            PrintStyle(font_color="orange", padding=True).print(empty_msg)
+                            self.context.log.log(
+                                type="warning",
+                                content=f"{self.agent_name}: {empty_msg}",
+                            )
+                        if debug_capture_trace and debug_trace_payload is not None:
+                            self._write_llm_debug_trace_payload(
+                                payload=debug_trace_payload,
+                                response=agent_response,
+                                reasoning=_reasoning,
+                            )
                         await self.handle_intervention(agent_response)
 
                         # Notify extensions to finalize their stream filters
@@ -502,8 +546,9 @@ class Agent:
                         await self.handle_intervention(agent_response)
 
                         if (
-                            self.loop_data.last_response == agent_response
-                        ):  # if assistant_response is the same as last message in history, let him know
+                            (agent_response or "").strip()
+                            and self.loop_data.last_response == agent_response
+                        ):  # if assistant_response is the same as last non-empty message in history, let him know
                             # Append the assistant's response to the history
                             self.hist_add_ai_response(agent_response)
                             # Append warning message to the history
@@ -726,28 +771,38 @@ class Agent:
             max_retries = class_max_retries
             delay = class_delay
             if max_retries <= 0:
+                detailed_error_message = errors.format_error(e)
+                user_error_message = errors.user_facing_error_message(
+                    e, detailed_error=detailed_error_message
+                )
                 self.context.log.log(
                     type="warning",
                     heading="Critical error classified non-retryable",
-                    content=f"class={retry_class}; error={errors.format_error(e)}",
+                    content=f"class={retry_class}; error={user_error_message}",
                 )
                 self.handle_critical_exception(e)
 
         if error_retries >= max_retries:
             self.handle_critical_exception(e)
 
-        error_message = errors.format_error(e)
+        detailed_error_message = errors.format_error(e)
+        user_error_message = errors.user_facing_error_message(
+            e, detailed_error=detailed_error_message
+        )
         
         self.context.log.log(
-            type="warning", heading="Critical error occurred, retrying...", content=error_message
+            type="warning",
+            heading="Critical error occurred, retrying...",
+            content=user_error_message,
         )
         PrintStyle(font_color="orange", padding=True).print(
             "Critical error occurred, retrying..."
         )
+        PrintStyle(font_color="orange", padding=True).print(detailed_error_message)
         await asyncio.sleep(delay)
         await self.handle_intervention()
         agent_facing_error = self.read_prompt(
-            "fw.msg_critical_error.md", error_message=error_message
+            "fw.msg_critical_error.md", error_message=user_error_message
         )
         self.hist_add_warning(message=agent_facing_error)
         PrintStyle(font_color="orange", padding=True).print(
@@ -769,13 +824,16 @@ class Agent:
         else:
             # Handling for general exceptions
             error_text = errors.error_text(exception)
-            error_message = errors.format_error(exception)
+            detailed_error_message = errors.format_error(exception)
+            user_error_message = errors.user_facing_error_message(
+                exception, detailed_error=detailed_error_message
+            )
 
             # Mask secrets in error messages
-            PrintStyle(font_color="red", padding=True).print(error_message)
+            PrintStyle(font_color="red", padding=True).print(detailed_error_message)
             self.context.log.log(
                 type="error",
-                content=error_message,
+                content=user_error_message,
             )
             PrintStyle(font_color="red", padding=True).print(
                 f"{self.agent_name}: {error_text}"
@@ -964,6 +1022,9 @@ class Agent:
             ),
             explicit_caching=explicit_caching,
         )
+        self.loop_data.params_temporary["last_model_call_diagnostics"] = getattr(
+            model, "_last_call_diagnostics", {}
+        )
 
         return response, reasoning
 
@@ -1007,10 +1068,36 @@ class Agent:
         tool_request = extract_tools.json_parse_dirty(msg)
 
         if tool_request is not None:
-            raw_tool_name = tool_request.get("tool_name", tool_request.get("tool",""))  # Get the raw tool name
+            raw_tool_name = str(
+                tool_request.get("tool_name", tool_request.get("tool", "")) or ""
+            ).strip()  # Get the raw tool name
             tool_args = tool_request.get("tool_args", tool_request.get("args", {}))
             if not isinstance(tool_args, dict):
                 tool_args = {}
+            incomplete_tool_msg = self._incomplete_tool_envelope_message(
+                raw_tool_name=raw_tool_name,
+                tool_args=tool_args,
+                raw_message=msg,
+            )
+            if incomplete_tool_msg:
+                self.loop_data.params_temporary["guardrail_misformat"] = True
+                self.hist_add_warning(incomplete_tool_msg)
+                PrintStyle(font_color="orange", padding=True).print(incomplete_tool_msg)
+                self.context.log.log(
+                    type="warning",
+                    content=f"{self.agent_name}: {incomplete_tool_msg}",
+                )
+                return incomplete_tool_msg
+
+            response_bypass_text = self._response_tool_bypass_text(
+                raw_tool_name=raw_tool_name,
+                tool_args=tool_args,
+                execution_mode=execution_mode,
+                set=set,
+            )
+            if response_bypass_text is not None:
+                self._log_plain_text_response(response_bypass_text)
+                return response_bypass_text
 
             tool_args, execute_tool_args = self._normalize_tool_args(
                 tool_args=tool_args,
@@ -1028,6 +1115,10 @@ class Agent:
                     type="warning",
                     content=f"{self.agent_name}: {preflight_msg}",
                 )
+                self._flush_pending_post_tool_text(
+                    execution_mode=execution_mode,
+                    set=set,
+                )
                 return preflight_msg
             if bool(set.get("agent_guard_repeated_tool_action_enabled", False)):
                 repeat_guard_message = self._check_repeated_tool_action_guard(
@@ -1041,6 +1132,10 @@ class Agent:
                     self.context.log.log(
                         type="warning",
                         content=f"{self.agent_name}: {repeat_guard_message}",
+                    )
+                    self._flush_pending_post_tool_text(
+                        execution_mode=execution_mode,
+                        set=set,
                     )
                     return repeat_guard_message
 
@@ -1096,7 +1191,6 @@ class Agent:
                         tool_args=execute_tool_args or {},
                         tool_name=tool_name,
                     )
-
                     self._record_degradation_metric("tool_calls", 1)
                     response = await tool.execute(**execute_tool_args)
                     await self.handle_intervention()
@@ -1114,9 +1208,20 @@ class Agent:
                         tool_result=(response.message or ""),
                     )
                     if hard_stop_message:
+                        self._flush_pending_post_tool_text(
+                            execution_mode=execution_mode,
+                            set=set,
+                        )
                         return hard_stop_message
 
                     if response.break_loop:
+                        # Ensure break-loop tool results are rendered in the UI
+                        # (e.g., deterministic file reads) before returning.
+                        self._log_plain_text_response(response.message or "")
+                        self._flush_pending_post_tool_text(
+                            execution_mode=execution_mode,
+                            set=set,
+                        )
                         return response.message
                 finally:
                     self.loop_data.current_tool = None
@@ -1129,7 +1234,14 @@ class Agent:
                 self.context.log.log(
                     type="warning", content=f"{self.agent_name}: {error_detail}"
                 )
+            self._flush_pending_post_tool_text(
+                execution_mode=execution_mode,
+                set=set,
+            )
         else:
+            # Ensure trailing text queued by a prior mixed/tool segment does not
+            # leak into a later non-tool turn.
+            self.loop_data.params_temporary.pop("pending_post_tool_text", None)
             if (
                 execution_mode in ("hybrid", "model_first")
                 and bool(set.get("agent_execution_allow_plain_text_response", False))
@@ -1152,14 +1264,7 @@ class Agent:
                 consecutive_misformats=consecutive_misformats,
                 set=set,
             ):
-                notice = (
-                    f"[EXECUTION_MODE:{execution_mode.upper()}] "
-                    "Accepted plain-text response instead of requiring a tool envelope."
-                )
-                self.context.log.log(
-                    type="info",
-                    content=f"{self.agent_name}: {notice}",
-                )
+                self._log_plain_text_response(msg)
                 return msg
             self.loop_data.params_temporary["guardrail_misformat"] = True
             warning_msg_misformat = self.read_prompt("fw.msg_misformat.md")
@@ -1206,6 +1311,195 @@ class Agent:
             return True
 
         return False
+
+    def _response_tool_bypass_text(
+        self,
+        raw_tool_name: str,
+        tool_args: dict,
+        execution_mode: str,
+        set: settings.Settings,
+    ) -> str | None:
+        if raw_tool_name != "response":
+            return None
+        if execution_mode not in ("hybrid", "model_first"):
+            return None
+        if not bool(set.get("agent_execution_allow_plain_text_response", False)):
+            return None
+        if (
+            bool(set.get("agent_execution_require_tool_for_risky_intents", True))
+            and self._is_risky_user_intent(set)
+        ):
+            return None
+        response_text = self._extract_response_text(tool_args)
+        if not response_text:
+            return None
+        return response_text
+
+    def _extract_response_text(self, tool_args: dict[str, Any]) -> str:
+        text = tool_args.get("text", tool_args.get("message", ""))
+        if text is None:
+            return ""
+        return str(text).strip()
+
+    def _incomplete_tool_envelope_message(
+        self, raw_tool_name: str, tool_args: dict[str, Any], raw_message: str = ""
+    ) -> str | None:
+        text = str(raw_message or "").strip()
+        if text.startswith("{") and '"tool_name"' in text and not text.endswith("}"):
+            return (
+                "[TOOL_JSON_INCOMPLETE] Tool JSON appears truncated before closing brace. "
+                "Regenerate complete JSON."
+            )
+        if not str(raw_tool_name or "").strip():
+            return (
+                "[TOOL_JSON_INCOMPLETE] Missing `tool_name` in tool envelope. "
+                "Regenerate complete JSON."
+            )
+        if raw_tool_name in {"code", "code_execution", "code_execution_"}:
+            return (
+                "[TOOL_JSON_INCOMPLETE] `tool_name` appears truncated "
+                f"({raw_tool_name!r}); expected 'code_execution_tool'."
+            )
+        if raw_tool_name != "code_execution_tool":
+            return None
+        if not tool_args:
+            return (
+                "[TOOL_JSON_INCOMPLETE] code_execution_tool is missing `tool_args`. "
+                "Regenerate complete JSON."
+            )
+        runtime = tool_args.get("runtime")
+        if runtime is None:
+            return None
+        if not str(runtime).strip():
+            return (
+                "[TOOL_JSON_INCOMPLETE] code_execution_tool payload appears partial "
+                "(empty `runtime`). Regenerate complete JSON."
+            )
+        return None
+
+    def _log_plain_text_response(self, message: str) -> None:
+        if not (message or "").strip():
+            return
+        key = "log_item_response"
+        log_item = self.loop_data.params_temporary.get(key)
+        if log_item is None:
+            log_item = self.context.log.log(
+                type="response",
+                heading=f"icon://chat {self.agent_name}: Responding",
+            )
+            self.loop_data.params_temporary[key] = log_item
+        log_item.update(content=message)
+
+    def _flush_pending_post_tool_text(
+        self,
+        execution_mode: Literal["tool_first", "tool_first_fallback", "hybrid", "model_first"],
+        set: settings.Settings,
+    ) -> None:
+        key = "pending_post_tool_text"
+        text = self.loop_data.params_temporary.pop(key, "")
+        if not isinstance(text, str):
+            text = str(text or "")
+        text = text.strip()
+        if not text:
+            return
+        if not self._should_accept_plain_text_response(
+            msg=text,
+            execution_mode=execution_mode,
+            consecutive_misformats=0,
+            set=set,
+        ):
+            return
+        # Emit trailing text as a separate response bubble after tool execution.
+        self.loop_data.params_temporary.pop("log_item_response", None)
+        self._log_plain_text_response(text)
+
+    def _debug_stream_to_console(self, set: settings.Settings) -> bool:
+        return bool(set.get("agent_debug_mode_enabled", False))
+
+    def _debug_capture_enabled(self, set: settings.Settings) -> bool:
+        return self._debug_stream_to_console(set) and bool(
+            set.get("agent_debug_capture_full_llm_exchange", False)
+        )
+
+    def _truncate_debug_value(self, value: Any, max_chars: int) -> str:
+        if value is None:
+            text = ""
+        elif isinstance(value, str):
+            text = value
+        else:
+            try:
+                text = json.dumps(value, ensure_ascii=False, indent=2)
+            except Exception:
+                text = str(value)
+        if max_chars <= 0 or len(text) <= max_chars:
+            return text
+        omitted = len(text) - max_chars
+        return f"{text[:max_chars]}\n\n<<< truncated {omitted} chars >>>"
+
+    def _build_llm_debug_trace_payload(self, prompt: list[BaseMessage]) -> dict[str, Any]:
+        set = settings.get_effective_settings(self)
+        max_chars = int(set.get("agent_debug_capture_max_chars", 400000))
+        context_id = getattr(self.context, "id", "")
+        history_counter = int(getattr(self.history, "counter", 0) or 0)
+        payload: dict[str, Any] = {
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "context_id": context_id,
+            "agent_name": self.agent_name,
+            "iteration": int(getattr(self.loop_data, "iteration", 0)),
+            "history_message_count": history_counter,
+            "settings": {
+                "agent_execution_mode": set.get("agent_execution_mode", "tool_first"),
+                "agent_execution_allow_plain_text_response": bool(
+                    set.get("agent_execution_allow_plain_text_response", False)
+                ),
+                "agent_execution_require_tool_for_risky_intents": bool(
+                    set.get("agent_execution_require_tool_for_risky_intents", True)
+                ),
+            },
+            "ctx_window": self.get_data(Agent.DATA_NAME_CTX_WINDOW),
+        }
+
+        serialized_prompt: list[dict[str, Any]] = []
+        for msg in prompt:
+            role = msg.__class__.__name__
+            content = self._truncate_debug_value(getattr(msg, "content", ""), max_chars)
+            serialized_prompt.append({"role": role, "content": content})
+        payload["prompt_messages"] = serialized_prompt
+        payload["prompt_compiled"] = self._truncate_debug_value(
+            self.get_data(Agent.DATA_NAME_CTX_WINDOW), max_chars
+        )
+        payload["_debug_max_chars"] = max_chars
+        return payload
+
+    def _write_llm_debug_trace_payload(
+        self, payload: dict[str, Any], response: str, reasoning: str | None
+    ) -> None:
+        try:
+            set = settings.get_effective_settings(self)
+            trace_dir_rel = str(set.get("agent_debug_capture_dir", "logs/llm_debug")).strip() or "logs/llm_debug"
+            max_chars = int(set.get("agent_debug_capture_max_chars", 400000))
+            payload = dict(payload)
+            payload["model_call_diagnostics"] = self.loop_data.params_temporary.get(
+                "last_model_call_diagnostics", {}
+            )
+            payload["response"] = self._truncate_debug_value(response, max_chars)
+            payload["reasoning"] = self._truncate_debug_value(reasoning or "", max_chars)
+            payload["response_length"] = len(response or "")
+            payload["reasoning_length"] = len(reasoning or "")
+            file_name = (
+                f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')}"
+                f"__ctx_{self.context.id}__iter_{int(getattr(self.loop_data, 'iteration', 0))}.json"
+            )
+            trace_dir_abs = files.get_abs_path(trace_dir_rel)
+            os.makedirs(trace_dir_abs, exist_ok=True)
+            out_path = files.get_abs_path(trace_dir_abs, file_name)
+            with open(out_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, indent=2)
+        except Exception as e:
+            # Never break agent execution for debug capture failures.
+            PrintStyle(font_color="orange", padding=True).print(
+                f"Debug trace capture failed: {e}"
+            )
 
     def _is_risky_user_intent(self, set: settings.Settings) -> bool:
         text = self._latest_user_message_text().lower()
@@ -1516,7 +1810,8 @@ class Agent:
     ) -> str | None:
         if not bool(set.get("code_exec_tool_preflight_enabled", False)):
             return None
-        if raw_tool_name.split(":", 1)[0] != "code_execution_tool":
+        tool_name = str(raw_tool_name or "").split(":", 1)[0]
+        if tool_name != "code_execution_tool":
             return None
         return self._preflight_code_execution_tool_args(execute_tool_args)
 
@@ -1631,6 +1926,22 @@ class Agent:
     async def handle_response_stream(self, stream: str):
         await self.handle_intervention()
         try:
+            set = settings.get_effective_settings(self)
+            execution_mode = self._get_execution_mode(set)
+            stripped = (stream or "").lstrip()
+            if (
+                stripped
+                and not stripped.startswith("{")
+                and self._should_accept_plain_text_response(
+                    msg=stream,
+                    execution_mode=execution_mode,
+                    consecutive_misformats=0,
+                    set=set,
+                )
+            ):
+                # Plain-text outputs do not pass through JSON tool parsing,
+                # so mirror them into the response log as they stream.
+                self._log_plain_text_response(stream)
             if len(stream) < 25:
                 return  # no reason to try
             response = DirtyJson.parse_string(stream)

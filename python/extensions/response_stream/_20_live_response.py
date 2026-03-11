@@ -16,14 +16,20 @@ class LiveResponse(Extension):
         **kwargs,
     ):
         try:
-            if (
-                not "tool_name" in parsed
-                or parsed["tool_name"] != "response"
-                or "tool_args" not in parsed
-                or "text" not in parsed["tool_args"]
-                or not parsed["tool_args"]["text"]
-            ):
-                return  # not a response
+            parsed = parsed if isinstance(parsed, dict) else {}
+            response_text = ""
+
+            if parsed.get("tool_name") == "response":
+                args = parsed.get("tool_args", {})
+                if isinstance(args, dict):
+                    response_text = str(args.get("text", args.get("message", ""))).strip()
+            elif "text" in parsed:
+                response_text = str(parsed.get("text", "")).strip()
+            elif "message" in parsed:
+                response_text = str(parsed.get("message", "")).strip()
+
+            if not response_text:
+                return
 
             # create log message and store it in loop data temporary params
             if "log_item_response" not in loop_data.params_temporary:
@@ -36,6 +42,6 @@ class LiveResponse(Extension):
 
             # update log message
             log_item = loop_data.params_temporary["log_item_response"]
-            log_item.update(content=parsed["tool_args"]["text"])
+            log_item.update(content=response_text)
         except Exception as e:
             pass
